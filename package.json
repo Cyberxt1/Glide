@@ -1,0 +1,28 @@
+{
+  "name": "glide",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "oxlint",
+    "typecheck": "node --check netlify/functions/_supabase.js && node --check netlify/functions/create-order.js && node --check netlify/functions/verify-payment.js && node --check netlify/functions/dashboard-summary.js",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.2",
+    "@zxing/browser": "^0.2.1",
+    "papaparse": "^5.5.4",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "oxlint": "^1.71.0",
+    "vite": "^8.1.1"
+  }
+}
