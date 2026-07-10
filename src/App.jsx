@@ -2292,15 +2292,19 @@ function CustomerCheckout({ qrCode }) {
     )
   }
 
-  return (
-    <main className="shop-page">
-      {showSplash && store ? (
+  if (showSplash) {
+    return (
+      <main className="shop-page splash-only">
         <div className="shop-splash">
           <span>Welcome to</span>
-          <strong>{store.merchant_profile?.store_name || 'Store'}</strong>
+          <strong>{store?.merchant_profile?.store_name || 'Glide'}</strong>
         </div>
-      ) : null}
+      </main>
+    )
+  }
 
+  return (
+    <main className="shop-page">
       {showGuide ? (
         <div className="guide-backdrop" role="dialog" aria-modal="true">
           <section className="guide-modal">
