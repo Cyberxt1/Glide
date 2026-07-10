@@ -52,3 +52,44 @@ export async function requireMerchant(event, supabase) {
 
   return profile.data
 }
+
+export async function requireMerchantOrStaff(event, supabase) {
+  const auth = event.headers.authorization || event.headers.Authorization
+  const jwt = auth?.replace('Bearer ', '')
+
+  if (!jwt) throw new Error('Login required.')
+
+  const { data, error } = await supabase.auth.getUser(jwt)
+  if (error || !data.user) throw new Error('Login required.')
+
+  const merchantProfile = await supabase
+    .from('merchant_profile')
+    .select('*')
+    .eq('user_id', data.user.id)
+    .maybeSingle()
+
+  if (merchantProfile.data) {
+    return {
+      merchant: merchantProfile.data,
+      staff: null,
+      user: data.user,
+      role: 'owner',
+    }
+  }
+
+  const staffProfile = await supabase
+    .from('staff_members')
+    .select('*,merchant_profile(*)')
+    .eq('user_id', data.user.id)
+    .eq('is_active', true)
+    .maybeSingle()
+
+  if (!staffProfile.data) throw new Error('Staff access required.')
+
+  return {
+    merchant: staffProfile.data.merchant_profile,
+    staff: staffProfile.data,
+    user: data.user,
+    role: staffProfile.data.role,
+  }
+}

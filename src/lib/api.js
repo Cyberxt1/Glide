@@ -31,7 +31,7 @@ export async function callFunction(name, payload = {}, authed = true) {
   }
 
   if (!response.ok) {
-    throw new Error(data.error || 'Request failed. Please try again.')
+    throw new Error(data.error || data.message || data.details || 'Request failed. Please try again.')
   }
 
   return data

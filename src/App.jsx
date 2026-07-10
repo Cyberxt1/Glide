@@ -105,6 +105,12 @@ function App() {
     return <StoreSetup session={session} />
   }
 
+  if (path === '/cashier') {
+    if (!sessionLoaded) return <main className="auth-page"><LoadingRows /></main>
+    if (!session) return <Login />
+    return <CashierPage session={session} />
+  }
+
   const qrMatch = path.match(/^\/s\/([^/]+)$/)
   if (qrMatch) return <CustomerCheckout qrCode={qrMatch[1]} />
 
@@ -147,6 +153,31 @@ function Landing() {
   )
 }
 
+async function getUserHomePath() {
+  const sessionResult = await supabase.auth.getSession()
+  const userId = sessionResult.data.session?.user?.id
+  if (!userId) return '/login'
+
+  const merchant = await supabase
+    .from('merchant_profile')
+    .select('id')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (merchant.data) return '/dash'
+
+  const staff = await supabase
+    .from('staff_members')
+    .select('id,role,is_active')
+    .eq('user_id', userId)
+    .eq('is_active', true)
+    .maybeSingle()
+
+  if (staff.data?.role === 'cashier') return '/cashier'
+
+  return '/setup-store'
+}
+
 function MerchantDashboardRoute({ path, session }) {
   const [state, setState] = useState({ loading: true, error: '', profile: null })
 
@@ -164,6 +195,18 @@ function MerchantDashboardRoute({ path, session }) {
       }
 
       if (!data) {
+        const staff = await supabase
+          .from('staff_members')
+          .select('id,role,is_active')
+          .eq('user_id', session.user.id)
+          .eq('is_active', true)
+          .maybeSingle()
+
+        if (staff.data) {
+          navigate('/cashier')
+          return
+        }
+
         navigate('/setup-store')
         return
       }
@@ -183,6 +226,7 @@ function MerchantDashboardRoute({ path, session }) {
   if (path === '/dash/qr') return <AppShell session={session} main={<QrPage />} />
   if (path === '/dash/verify') return <AppShell session={session} main={<VerifyReceipt />} />
   if (path === '/dash/orders') return <AppShell session={session} main={<Orders />} />
+  if (path === '/dash/staff') return <AppShell session={session} main={<StaffManagement />} />
 
   return <NotFound />
 }
@@ -208,7 +252,8 @@ function Login() {
       return
     }
 
-    navigate('/dash')
+    const homePath = await getUserHomePath()
+    navigate(homePath)
   }
 
   return (
@@ -458,6 +503,7 @@ function AppShell({ session, main }) {
           <Link href="/dash/qr">Store QR</Link>
           <Link href="/dash/verify">Verify receipt</Link>
           <Link href="/dash/orders">Orders</Link>
+          <Link href="/dash/staff">Staff</Link>
         </nav>
         <div className="merchant-meta">
           <span>{session?.user?.email}</span>
@@ -775,6 +821,149 @@ function Products() {
         </div>
       ) : (
         <EmptyState>No products match this view.</EmptyState>
+      )}
+    </section>
+  )
+}
+
+function StaffManagement() {
+  const [staff, setStaff] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [message, setMessage] = useState('')
+  const [form, setForm] = useState({ fullName: '', email: '', password: '' })
+  const [busy, setBusy] = useState(false)
+
+  async function loadStaff() {
+    setLoading(true)
+    const { data, error } = await supabase
+      .from('staff_members')
+      .select('*')
+      .order('created_at', { ascending: false })
+
+    setLoading(false)
+    if (error) {
+      setMessage(error.message)
+      return
+    }
+
+    setStaff(data || [])
+  }
+
+  useEffect(() => {
+    loadStaff()
+  }, [])
+
+  function update(field, value) {
+    setForm((current) => ({ ...current, [field]: value }))
+  }
+
+  async function submit(event) {
+    event.preventDefault()
+    setBusy(true)
+    setMessage('')
+
+    try {
+      await callFunction('create-staff-user', {
+        fullName: form.fullName,
+        email: form.email,
+        password: form.password,
+      })
+      setForm({ fullName: '', email: '', password: '' })
+      await loadStaff()
+      setMessage('Cashier account created.')
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function setActive(staffMember, isActive) {
+    const { error } = await supabase
+      .from('staff_members')
+      .update({ is_active: isActive })
+      .eq('id', staffMember.id)
+
+    if (error) {
+      setMessage(error.message)
+      return
+    }
+
+    loadStaff()
+  }
+
+  return (
+    <section className="dash-section">
+      <PageTitle title="Staff" subtitle="Add cashier accounts for counter checkout." />
+      {message ? <Notice tone={message.includes('created') ? 'success' : 'warning'}>{message}</Notice> : null}
+      <form className="product-form" onSubmit={submit}>
+        <h2>Add cashier</h2>
+        <div className="form-grid">
+          <label>
+            Full name
+            <input
+              value={form.fullName}
+              onChange={(event) => update('fullName', event.target.value)}
+            />
+          </label>
+          <label>
+            Email
+            <input
+              required
+              type="email"
+              value={form.email}
+              onChange={(event) => update('email', event.target.value)}
+            />
+          </label>
+          <label>
+            Temporary password
+            <input
+              required
+              minLength={6}
+              type="password"
+              value={form.password}
+              onChange={(event) => update('password', event.target.value)}
+            />
+          </label>
+        </div>
+        <button disabled={busy} type="submit">
+          {busy ? 'Creating cashier...' : 'Create cashier'}
+        </button>
+      </form>
+
+      {loading ? (
+        <LoadingRows />
+      ) : staff.length ? (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {staff.map((member) => (
+                <tr key={member.id}>
+                  <td>{member.full_name || 'Not set'}</td>
+                  <td>{member.email}</td>
+                  <td>{member.role}</td>
+                  <td>{member.is_active ? 'Active' : 'Disabled'}</td>
+                  <td>
+                    <button type="button" onClick={() => setActive(member, !member.is_active)}>
+                      {member.is_active ? 'Disable' : 'Enable'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <EmptyState>No cashier accounts yet.</EmptyState>
       )}
     </section>
   )
@@ -1165,6 +1354,170 @@ function QrPage() {
   )
 }
 
+function CashierPage({ session }) {
+  const [barcode, setBarcode] = useState('')
+  const [cart, setCart] = useState([])
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function logout() {
+    await supabase.auth.signOut()
+    navigate('/login')
+  }
+
+  async function addBarcode(event) {
+    event.preventDefault()
+    const code = barcode.trim()
+    if (!code) return
+
+    setMessage('')
+    const { data, error } = await supabase
+      .from('products')
+      .select(productColumns)
+      .eq('barcode', code)
+      .eq('is_available', true)
+      .maybeSingle()
+
+    if (error || !data) {
+      setMessage('Product not found or unavailable.')
+      return
+    }
+
+    const existing = cart.find((item) => item.id === data.id)
+    const nextQuantity = (existing?.cartQuantity || 0) + 1
+    if (data.track_inventory && nextQuantity > data.quantity) {
+      setMessage('This item is out of stock.')
+      return
+    }
+
+    setCart((current) =>
+      existing
+        ? current.map((item) =>
+            item.id === data.id ? { ...item, cartQuantity: nextQuantity } : item,
+          )
+        : [...current, { ...data, cartQuantity: 1 }],
+    )
+    setBarcode('')
+  }
+
+  function changeQuantity(product, delta) {
+    setCart((current) =>
+      current
+        .map((item) => {
+          if (item.id !== product.id) return item
+          const next = item.cartQuantity + delta
+          if (item.track_inventory && next > item.quantity) return item
+          return { ...item, cartQuantity: next }
+        })
+        .filter((item) => item.cartQuantity > 0),
+    )
+  }
+
+  const total = cart.reduce((sum, item) => sum + item.price * item.cartQuantity, 0)
+
+  async function completeSale() {
+    setBusy(true)
+    setMessage('')
+
+    try {
+      const result = await callFunction('cashier-create-order', {
+        cart: cart.map((item) => ({ productId: item.id, quantity: item.cartQuantity })),
+      })
+      navigate(`/receipt/${result.receiptToken}`)
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <main className="cashier-page">
+      <header className="cashier-header">
+        <div>
+          <span>Glide cashier</span>
+          <strong>Counter checkout</strong>
+          <small>{session.user.email}</small>
+        </div>
+        <button type="button" onClick={logout}>
+          Sign out
+        </button>
+      </header>
+
+      {message ? <Notice tone="warning">{message}</Notice> : null}
+
+      <form className="barcode-form" onSubmit={addBarcode}>
+        <label>
+          Scan or enter barcode
+          <input
+            autoFocus
+            inputMode="numeric"
+            placeholder="Barcode"
+            value={barcode}
+            onChange={(event) => setBarcode(event.target.value)}
+          />
+        </label>
+        <button type="submit">Add</button>
+      </form>
+
+      <section className="cart-panel active cashier-cart">
+        <div className="cart-title-row">
+          <h1>Cashier cart</h1>
+          <strong>{formatMoney(total)}</strong>
+        </div>
+
+        {cart.length ? (
+          <>
+            {cart.map((item) => (
+              <div className="cart-row" key={item.id}>
+                <button
+                  className="cart-remove-dot"
+                  type="button"
+                  aria-label={`Remove ${item.name}`}
+                  onClick={() => changeQuantity(item, -item.cartQuantity)}
+                >
+                  x
+                </button>
+                <div className="product-thumb" aria-hidden="true">
+                  {productInitials(item.name)}
+                </div>
+                <div className="cart-item-copy">
+                  <strong>{item.name}</strong>
+                  <span>{formatMoney(item.price)}</span>
+                </div>
+                <strong className="cart-line-total">
+                  {formatMoney(item.price * item.cartQuantity)}
+                </strong>
+                <div className="quantity-actions">
+                  <button type="button" onClick={() => changeQuantity(item, -1)}>
+                    -
+                  </button>
+                  <span>{item.cartQuantity}</span>
+                  <button type="button" onClick={() => changeQuantity(item, 1)}>
+                    +
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            <div className="cart-checkout-bar">
+              <div className="cart-total">
+                <span>Total</span>
+                <strong>{formatMoney(total)}</strong>
+              </div>
+              <button disabled={busy} type="button" onClick={completeSale}>
+                {busy ? 'Generating receipt...' : 'Mark paid and generate receipt'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <EmptyState>Scan or enter a product barcode to begin.</EmptyState>
+        )}
+      </section>
+    </main>
+  )
+}
+
 function CustomerCheckout({ qrCode }) {
   const [store, setStore] = useState(null)
   const [inactive, setInactive] = useState(false)
@@ -1177,7 +1530,6 @@ function CustomerCheckout({ qrCode }) {
   const [showOptions, setShowOptions] = useState(false)
   const [hasShownCameraGuide, setHasShownCameraGuide] = useState(false)
   const [barcode, setBarcode] = useState('')
-  const [customerEmail, setCustomerEmail] = useState('')
   const [cart, setCart] = useState([])
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
@@ -1437,7 +1789,6 @@ function CustomerCheckout({ qrCode }) {
     stopCamera()
     setCart([])
     setBarcode('')
-    setCustomerEmail('')
     setMessage('')
     setAddToast(null)
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
@@ -1457,13 +1808,6 @@ function CustomerCheckout({ qrCode }) {
   }
 
   async function checkout() {
-    const cleanEmail = customerEmail.trim()
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      setMessage('Enter a valid email address for your payment receipt.')
-      setActiveTab('cart')
-      return
-    }
-
     setBusy(true)
     setMessage('')
     try {
@@ -1472,7 +1816,6 @@ function CustomerCheckout({ qrCode }) {
         {
           qrCode,
           shopperSessionId,
-          customerEmail: cleanEmail,
           cart: cart.map((item) => ({ productId: item.id, quantity: item.cartQuantity })),
         },
         false,
@@ -1572,6 +1915,7 @@ function CustomerCheckout({ qrCode }) {
         <div>
           <span>Welcome to</span>
           <strong>{store?.merchant_profile?.store_name || 'Store'}</strong>
+          <small>{cartCount ? `${cartCount} item${cartCount === 1 ? '' : 's'} in cart` : 'Scan products as you shop'}</small>
         </div>
         <div className="shop-options">
           <button
@@ -1710,22 +2054,11 @@ function CustomerCheckout({ qrCode }) {
                 </div>
               ))}
               <div className="cart-checkout-bar">
-                <label className="checkout-email">
-                  Email for receipt
-                  <input
-                    required
-                    type="email"
-                    inputMode="email"
-                    placeholder="you@example.com"
-                    value={customerEmail}
-                    onChange={(event) => setCustomerEmail(event.target.value)}
-                  />
-                </label>
                 <div className="cart-total">
                   <span>Total</span>
                   <strong>{formatMoney(total)}</strong>
                 </div>
-                <button disabled={!cart.length || busy || !customerEmail.trim()} type="button" onClick={checkout}>
+                <button disabled={!cart.length || busy} type="button" onClick={checkout}>
                   {busy ? 'Starting payment...' : 'Checkout'}
                 </button>
               </div>
@@ -1738,8 +2071,8 @@ function CustomerCheckout({ qrCode }) {
 
       {activeTab !== 'cart' ? (
         <button className="cart-fab" type="button" onClick={() => setActiveTab('cart')}>
-          Cart
           <span>{cartCount}</span>
+          <strong>{formatMoney(total)}</strong>
         </button>
       ) : null}
     </main>
@@ -1748,6 +2081,9 @@ function CustomerCheckout({ qrCode }) {
 
 function PaymentReturn({ receiptToken }) {
   const [state, setState] = useState({ loading: true, error: '', receipt: null })
+  const [email, setEmail] = useState('')
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     const reference = new URLSearchParams(window.location.search).get('reference')
@@ -1756,18 +2092,57 @@ function PaymentReturn({ receiptToken }) {
       .catch((error) => setState({ loading: false, error: error.message, receipt: null }))
   }, [receiptToken])
 
+  async function saveEmail(event) {
+    event.preventDefault()
+    setMessage('')
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setMessage('Enter a valid email address.')
+      return
+    }
+
+    setBusy(true)
+    try {
+      await callFunction('save-receipt-email', { receiptToken, email }, false)
+      setMessage('Receipt email saved.')
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
-    <main className="public-page narrow">
+    <main className="payment-page">
       {state.loading ? <LoadingRows /> : null}
       {state.error ? <Notice tone="error">{state.error}</Notice> : null}
       {state.receipt ? (
-        <>
+        <section className="payment-card">
+          <p className="eyebrow">Payment complete</p>
           <h1>Payment confirmed.</h1>
-          <p className="lead">Your receipt is ready for exit verification.</p>
+          <p className="lead">Enter your email if you want it saved with this receipt, then show the receipt at the exit.</p>
+          {message ? (
+            <Notice tone={message.includes('saved') ? 'success' : 'warning'}>{message}</Notice>
+          ) : null}
+          <form className="receipt-email-form" onSubmit={saveEmail}>
+            <label>
+              Email for receipt
+              <input
+                type="email"
+                inputMode="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+              />
+            </label>
+            <button disabled={busy} type="submit">
+              {busy ? 'Saving...' : 'Save email'}
+            </button>
+          </form>
           <Link className="primary-action" href={`/receipt/${receiptToken}`}>
             View receipt
           </Link>
-        </>
+        </section>
       ) : null}
     </main>
   )
@@ -1776,6 +2151,7 @@ function PaymentReturn({ receiptToken }) {
 function ReceiptPage({ token }) {
   const [order, setOrder] = useState(null)
   const [loading, setLoading] = useState(true)
+  const receiptBarcodeRef = useRef(null)
 
   useEffect(() => {
     async function loadReceipt() {
@@ -1789,6 +2165,25 @@ function ReceiptPage({ token }) {
     }
     loadReceipt()
   }, [token])
+
+  useEffect(() => {
+    if (!order?.receipt_token || !receiptBarcodeRef.current) return
+
+    async function renderBarcode() {
+      const { default: JsBarcode } = await import('jsbarcode')
+      if (!receiptBarcodeRef.current) return
+
+      JsBarcode(receiptBarcodeRef.current, order.receipt_token, {
+        format: 'CODE128',
+        width: 1.35,
+        height: 64,
+        margin: 8,
+        displayValue: false,
+      })
+    }
+
+    renderBarcode()
+  }, [order])
 
   if (loading) return <main className="public-page narrow"><LoadingRows /></main>
   if (!order) return <main className="public-page narrow"><h1>Receipt not found.</h1></main>
@@ -1811,10 +2206,16 @@ function ReceiptPage({ token }) {
         <SimpleList
           rows={[
             { label: 'Payment status', value: order.payment_status },
+            { label: 'Receipt email', value: order.customer_email || 'Not provided' },
             { label: 'Receipt token', value: order.receipt_token },
             { label: 'Exit token', value: order.exit_token },
           ]}
         />
+        <div className="receipt-barcode-panel">
+          <span>Scan to verify receipt</span>
+          <svg ref={receiptBarcodeRef} aria-label="Receipt barcode" />
+          <strong>{order.receipt_token}</strong>
+        </div>
         <Notice tone="success">Show this receipt at the exit for verification.</Notice>
       </section>
     </main>

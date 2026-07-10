@@ -9,6 +9,19 @@ create table if not exists public.merchant_profile (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.staff_members (
+  id uuid primary key default gen_random_uuid(),
+  merchant_id uuid not null references public.merchant_profile(id) on delete cascade,
+  user_id uuid not null unique references auth.users(id) on delete cascade,
+  email text not null,
+  full_name text,
+  role text not null default 'cashier' check (role in ('cashier')),
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (merchant_id, email)
+);
+
 create table if not exists public.products (
   id uuid primary key default gen_random_uuid(),
   merchant_id uuid not null references public.merchant_profile(id) on delete cascade,
@@ -39,6 +52,7 @@ create table if not exists public.qr_codes (
 create table if not exists public.orders (
   id uuid primary key default gen_random_uuid(),
   merchant_id uuid not null references public.merchant_profile(id) on delete cascade,
+  staff_member_id uuid references public.staff_members(id) on delete set null,
   qr_code_id uuid references public.qr_codes(id),
   order_number text not null unique,
   shopper_session_id text,
@@ -57,6 +71,9 @@ create table if not exists public.orders (
 
 alter table public.orders
 add column if not exists shopper_session_id text;
+
+alter table public.orders
+add column if not exists staff_member_id uuid references public.staff_members(id) on delete set null;
 
 create table if not exists public.order_items (
   id uuid primary key default gen_random_uuid(),
@@ -95,6 +112,8 @@ create table if not exists public.inventory_movements (
 
 create index if not exists products_barcode_idx on public.products(barcode);
 create index if not exists products_sku_idx on public.products(sku);
+create index if not exists staff_members_user_id_idx on public.staff_members(user_id);
+create index if not exists staff_members_merchant_id_idx on public.staff_members(merchant_id);
 create index if not exists qr_codes_qr_code_idx on public.qr_codes(qr_code);
 create index if not exists orders_receipt_token_idx on public.orders(receipt_token);
 create index if not exists orders_shopper_session_id_idx on public.orders(shopper_session_id);
@@ -136,6 +155,21 @@ as $$
   );
 $$;
 
+create or replace function public.is_active_staff(target_merchant_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.staff_members
+    where merchant_id = target_merchant_id
+    and user_id = auth.uid()
+    and is_active
+  );
+$$;
+
 create or replace function public.set_current_merchant()
 returns trigger
 language plpgsql
@@ -165,6 +199,11 @@ create trigger merchant_profile_touch_updated_at
 before update on public.merchant_profile
 for each row execute function public.touch_updated_at();
 
+drop trigger if exists staff_members_touch_updated_at on public.staff_members;
+create trigger staff_members_touch_updated_at
+before update on public.staff_members
+for each row execute function public.touch_updated_at();
+
 drop trigger if exists products_set_current_merchant on public.products;
 create trigger products_set_current_merchant
 before insert on public.products
@@ -176,6 +215,7 @@ before insert on public.qr_codes
 for each row execute function public.set_current_merchant();
 
 alter table public.merchant_profile enable row level security;
+alter table public.staff_members enable row level security;
 alter table public.products enable row level security;
 alter table public.qr_codes enable row level security;
 alter table public.orders enable row level security;
@@ -214,12 +254,31 @@ to authenticated
 using (user_id = auth.uid())
 with check (user_id = auth.uid());
 
+drop policy if exists "merchant manages own staff" on public.staff_members;
+create policy "merchant manages own staff"
+on public.staff_members for all
+to authenticated
+using (public.owns_merchant(merchant_id))
+with check (public.owns_merchant(merchant_id));
+
+drop policy if exists "staff reads own staff row" on public.staff_members;
+create policy "staff reads own staff row"
+on public.staff_members for select
+to authenticated
+using (user_id = auth.uid() and is_active);
+
 drop policy if exists "merchant manages own products" on public.products;
 create policy "merchant manages own products"
 on public.products for all
 to authenticated
 using (public.owns_merchant(merchant_id))
 with check (public.owns_merchant(merchant_id));
+
+drop policy if exists "staff reads merchant products" on public.products;
+create policy "staff reads merchant products"
+on public.products for select
+to authenticated
+using (public.is_active_staff(merchant_id));
 
 drop policy if exists "public reads checkout products" on public.products;
 create policy "public reads checkout products"

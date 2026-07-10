@@ -7,12 +7,13 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "typecheck": "node --check netlify/functions/_supabase.js && node --check netlify/functions/create-order.js && node --check netlify/functions/verify-payment.js && node --check netlify/functions/dashboard-summary.js",
+    "typecheck": "node --check netlify/functions/_supabase.js && node --check netlify/functions/create-order.js && node --check netlify/functions/verify-payment.js && node --check netlify/functions/dashboard-summary.js && node --check netlify/functions/create-staff-user.js && node --check netlify/functions/cashier-create-order.js && node --check netlify/functions/save-receipt-email.js",
     "preview": "vite preview"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.2",
     "@zxing/browser": "^0.2.1",
+    "jsbarcode": "^3.12.3",
     "papaparse": "^5.5.4",
     "qrcode": "^1.5.4",
     "react": "^19.2.7",

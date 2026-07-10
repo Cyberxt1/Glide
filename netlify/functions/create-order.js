@@ -4,6 +4,15 @@ function bad(message) {
   return json(400, { error: message })
 }
 
+function fallbackEmail(shopperSessionId) {
+  const safeId = String(shopperSessionId || token(6))
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, 24)
+
+  return `customer+${safeId || token(6)}@glidecheckout.com`
+}
+
 function getSiteUrl(event) {
   const origin = event.headers.origin || event.headers.Origin
   if (origin) return origin
@@ -14,24 +23,42 @@ function getSiteUrl(event) {
   return process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL
 }
 
+function paystackSecretKey() {
+  return String(process.env.PAYSTACK_SECRET_KEY || '')
+    .trim()
+    .replace(/^['"]|['"]$/g, '')
+}
+
+async function parseProviderResponse(response) {
+  const text = await response.text()
+  if (!text) return {}
+
+  try {
+    return JSON.parse(text)
+  } catch {
+    return { message: text }
+  }
+}
+
 export async function handler(event) {
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed.' })
 
   try {
     const supabase = adminClient()
-    const { qrCode, cart, shopperSessionId, customerEmail } = JSON.parse(event.body || '{}')
-    const cleanEmail = String(customerEmail || '').trim().toLowerCase()
+    const { qrCode, cart, shopperSessionId } = JSON.parse(event.body || '{}')
+    const paymentEmail = fallbackEmail(shopperSessionId)
+    const secretKey = paystackSecretKey()
 
     if (!qrCode || !Array.isArray(cart) || cart.length === 0) {
       return bad('Cart is empty.')
     }
 
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      return bad('Enter a valid email address for payment.')
+    if (!secretKey) {
+      return bad('Paystack secret key is missing on the server.')
     }
 
-    if (!process.env.PAYSTACK_SECRET_KEY) {
-      return bad('Paystack secret key is missing on the server.')
+    if (!secretKey.startsWith('sk_')) {
+      return bad('Paystack secret key must be a secret key that starts with sk_.')
     }
 
     const siteUrl = getSiteUrl(event)
@@ -83,6 +110,8 @@ export async function handler(event) {
       })
     }
 
+    if (total <= 0) return bad('Cart total must be greater than zero.')
+
     const receiptToken = token()
     const exitToken = token(10)
     const orderNumber = `G-${Date.now().toString().slice(-7)}`
@@ -129,11 +158,11 @@ export async function handler(event) {
     const response = await fetch('https://api.paystack.co/transaction/initialize', {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+        Authorization: `Bearer ${secretKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        email: cleanEmail,
+        email: paymentEmail,
         amount: Math.round(total * 100),
         reference,
         callback_url: callbackUrl,
@@ -145,8 +174,10 @@ export async function handler(event) {
       }),
     })
 
-    const paystack = await response.json()
-    if (!response.ok || !paystack.status) return bad(paystack.message || 'Payment could not start.')
+    const paystack = await parseProviderResponse(response)
+    if (!response.ok || !paystack.status) {
+      return bad(paystack.message || 'Payment could not start. Check your Paystack secret key and currency setup.')
+    }
 
     return json(200, {
       authorizationUrl: paystack.data.authorization_url,
