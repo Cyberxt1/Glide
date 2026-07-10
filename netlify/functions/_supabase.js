@@ -1,8 +1,11 @@
 import { createClient } from '@supabase/supabase-js'
 import crypto from 'node:crypto'
 
+const fallbackSupabaseUrl = 'https://heyncvrqbnkkgxgnxlcs.supabase.co'
+
 export function adminClient() {
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
+  const supabaseUrl =
+    process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || fallbackSupabaseUrl
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
   if (!supabaseUrl) {

@@ -107,6 +107,9 @@ URL
 Functions. They can have the same value, but both names should be present in
 Netlify environment variables.
 
+`URL` is optional on Netlify. Checkout derives the Paystack callback URL from
+the request origin first, then falls back to Netlify deploy URL variables.
+
 Build command:
 
 ```bash

@@ -4,6 +4,16 @@ function bad(message) {
   return json(400, { error: message })
 }
 
+function getSiteUrl(event) {
+  const origin = event.headers.origin || event.headers.Origin
+  if (origin) return origin
+
+  const host = event.headers.host || event.headers.Host
+  if (host) return `https://${host}`
+
+  return process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL
+}
+
 export async function handler(event) {
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed.' })
 
@@ -19,9 +29,9 @@ export async function handler(event) {
       return bad('Paystack secret key is missing on the server.')
     }
 
-    const siteUrl = process.env.URL || process.env.DEPLOY_PRIME_URL
+    const siteUrl = getSiteUrl(event)
     if (!siteUrl) {
-      return bad('Public site URL is missing on the server.')
+      return bad('Could not determine the public site URL for Paystack callback.')
     }
 
     const qrResult = await supabase
