@@ -19,7 +19,16 @@ export async function callFunction(name, payload = {}, authed = true) {
     body: JSON.stringify(payload),
   })
 
-  const data = await response.json().catch(() => ({}))
+  const text = await response.text()
+  let data = {}
+
+  try {
+    data = text ? JSON.parse(text) : {}
+  } catch {
+    throw new Error(
+      `Server function "${name}" is not available. Run with Netlify dev locally or deploy to Netlify before using checkout/payment.`,
+    )
+  }
 
   if (!response.ok) {
     throw new Error(data.error || 'Request failed. Please try again.')

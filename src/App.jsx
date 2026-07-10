@@ -1467,6 +1467,11 @@ function CustomerCheckout({ qrCode }) {
         },
         false,
       )
+
+      if (!result.authorizationUrl) {
+        throw new Error('Payment could not start. The checkout server did not return a Paystack link.')
+      }
+
       window.location.href = result.authorizationUrl
     } catch (error) {
       setMessage(error.message)

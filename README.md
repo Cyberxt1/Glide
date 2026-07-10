@@ -55,7 +55,9 @@ npm install -g netlify-cli
 netlify dev
 ```
 
-The Vite-only command works for UI screens, but Paystack/order functions require Netlify:
+The Vite-only command works for UI screens. Dashboard data can fall back to
+direct Supabase reads, but checkout/payment cannot because Paystack must be
+initialized server-side. Use Netlify dev or a Netlify deployment for checkout:
 
 ```bash
 npm run dev
@@ -100,6 +102,10 @@ SUPABASE_SERVICE_ROLE_KEY
 PAYSTACK_SECRET_KEY
 URL
 ```
+
+`VITE_SUPABASE_URL` is used by the browser. `SUPABASE_URL` is used by Netlify
+Functions. They can have the same value, but both names should be present in
+Netlify environment variables.
 
 Build command:
 

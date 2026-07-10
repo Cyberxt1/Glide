@@ -15,6 +15,15 @@ export async function handler(event) {
       return bad('Cart is empty.')
     }
 
+    if (!process.env.PAYSTACK_SECRET_KEY) {
+      return bad('Paystack secret key is missing on the server.')
+    }
+
+    const siteUrl = process.env.URL || process.env.DEPLOY_PRIME_URL
+    if (!siteUrl) {
+      return bad('Public site URL is missing on the server.')
+    }
+
     const qrResult = await supabase
       .from('qr_codes')
       .select('id,merchant_id,qr_code,is_active,merchant_profile(store_name)')
@@ -86,7 +95,7 @@ export async function handler(event) {
     if (itemResult.error) return bad(itemResult.error.message)
 
     const reference = `glide_${token(10)}`
-    const callbackUrl = `${process.env.URL || process.env.DEPLOY_PRIME_URL}/pay/${receiptToken}`
+    const callbackUrl = `${siteUrl}/pay/${receiptToken}`
     const paymentResult = await supabase
       .from('payments')
       .insert({

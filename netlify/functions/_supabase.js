@@ -2,7 +2,18 @@ import { createClient } from '@supabase/supabase-js'
 import crypto from 'node:crypto'
 
 export function adminClient() {
-  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!supabaseUrl) {
+    throw new Error('SUPABASE_URL is missing in Netlify environment variables.')
+  }
+
+  if (!serviceRoleKey) {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY is missing in Netlify environment variables.')
+  }
+
+  return createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false },
   })
 }
