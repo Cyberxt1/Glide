@@ -19,10 +19,15 @@ export async function handler(event) {
 
   try {
     const supabase = adminClient()
-    const { qrCode, cart, shopperSessionId } = JSON.parse(event.body || '{}')
+    const { qrCode, cart, shopperSessionId, customerEmail } = JSON.parse(event.body || '{}')
+    const cleanEmail = String(customerEmail || '').trim().toLowerCase()
 
     if (!qrCode || !Array.isArray(cart) || cart.length === 0) {
       return bad('Cart is empty.')
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      return bad('Enter a valid email address for payment.')
     }
 
     if (!process.env.PAYSTACK_SECRET_KEY) {
@@ -128,7 +133,7 @@ export async function handler(event) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        email: 'customer@glide.local',
+        email: cleanEmail,
         amount: Math.round(total * 100),
         reference,
         callback_url: callbackUrl,

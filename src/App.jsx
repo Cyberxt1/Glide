@@ -1177,6 +1177,7 @@ function CustomerCheckout({ qrCode }) {
   const [showOptions, setShowOptions] = useState(false)
   const [hasShownCameraGuide, setHasShownCameraGuide] = useState(false)
   const [barcode, setBarcode] = useState('')
+  const [customerEmail, setCustomerEmail] = useState('')
   const [cart, setCart] = useState([])
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
@@ -1436,6 +1437,7 @@ function CustomerCheckout({ qrCode }) {
     stopCamera()
     setCart([])
     setBarcode('')
+    setCustomerEmail('')
     setMessage('')
     setAddToast(null)
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
@@ -1455,6 +1457,13 @@ function CustomerCheckout({ qrCode }) {
   }
 
   async function checkout() {
+    const cleanEmail = customerEmail.trim()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setMessage('Enter a valid email address for your payment receipt.')
+      setActiveTab('cart')
+      return
+    }
+
     setBusy(true)
     setMessage('')
     try {
@@ -1463,6 +1472,7 @@ function CustomerCheckout({ qrCode }) {
         {
           qrCode,
           shopperSessionId,
+          customerEmail: cleanEmail,
           cart: cart.map((item) => ({ productId: item.id, quantity: item.cartQuantity })),
         },
         false,
@@ -1700,11 +1710,22 @@ function CustomerCheckout({ qrCode }) {
                 </div>
               ))}
               <div className="cart-checkout-bar">
+                <label className="checkout-email">
+                  Email for receipt
+                  <input
+                    required
+                    type="email"
+                    inputMode="email"
+                    placeholder="you@example.com"
+                    value={customerEmail}
+                    onChange={(event) => setCustomerEmail(event.target.value)}
+                  />
+                </label>
                 <div className="cart-total">
                   <span>Total</span>
                   <strong>{formatMoney(total)}</strong>
                 </div>
-                <button disabled={!cart.length || busy} type="button" onClick={checkout}>
+                <button disabled={!cart.length || busy || !customerEmail.trim()} type="button" onClick={checkout}>
                   {busy ? 'Starting payment...' : 'Checkout'}
                 </button>
               </div>

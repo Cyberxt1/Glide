@@ -760,12 +760,21 @@ td a {
 }
 
 .cart-panel.active {
-  padding-bottom: 116px;
+  padding-bottom: 176px;
 }
 
 .cart-checkout-bar {
   display: grid;
   gap: 12px;
+}
+
+.checkout-email {
+  gap: 6px;
+  font-size: 12px;
+}
+
+.checkout-email input {
+  min-height: 40px;
 }
 
 .cart-panel.active .cart-checkout-bar {
