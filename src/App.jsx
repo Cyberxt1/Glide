@@ -1719,6 +1719,8 @@ function CustomerCheckout({ qrCode }) {
   const scanArmedRef = useRef(false)
   const scanProcessingRef = useRef(false)
   const lastDetectedRef = useRef({ code: '', time: 0 })
+  const latestVisibleBarcodeRef = useRef({ code: '', time: 0 })
+  const autoCameraTriedRef = useRef(false)
   const sessionStorageKey = `glide:checkout:${qrCode}:session`
   const cartStorageKey = `glide:checkout:${qrCode}:cart`
   const activityStorageKey = `glide:checkout:${qrCode}:lastActivity`
@@ -1796,6 +1798,15 @@ function CustomerCheckout({ qrCode }) {
     },
     [],
   )
+
+  useEffect(() => {
+    if (!store || showSplash || activeTab !== 'scan' || sessionEnded) return
+    if (cameraState !== 'idle' || autoCameraTriedRef.current) return
+
+    autoCameraTriedRef.current = true
+    startCamera({ automatic: true })
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, cameraState, sessionEnded, showSplash, store])
 
   useEffect(() => {
     cartRef.current = cart
@@ -1964,10 +1975,28 @@ function CustomerCheckout({ qrCode }) {
     }
   }
 
-  async function processDetectedBarcode(rawCode, source = 'camera') {
+  function observeDetectedBarcode(rawCode) {
     const exactCode = String(rawCode || '').trim()
     const now = Date.now()
+    if (!exactCode) return null
 
+    const previous = latestVisibleBarcodeRef.current
+    latestVisibleBarcodeRef.current = { code: exactCode, time: now }
+
+    if (
+      !scanArmedRef.current &&
+      !scanProcessingRef.current &&
+      (previous.code !== exactCode || now - previous.time > 1500)
+    ) {
+      setScanResult({ status: 'ready', code: exactCode, label: 'Barcode detected. Tap Scan.' })
+    }
+
+    return exactCode
+  }
+
+  async function processDetectedBarcode(rawCode, source = 'camera') {
+    const exactCode = observeDetectedBarcode(rawCode)
+    const now = Date.now()
     if (
       !exactCode ||
       !scanArmedRef.current ||
@@ -2047,7 +2076,10 @@ function CustomerCheckout({ qrCode }) {
         if (video.readyState >= 2 && !scanProcessingRef.current) {
           const detected = await detector.detect(video)
           const exactCode = detected?.[0]?.rawValue
-          if (exactCode) await processDetectedBarcode(exactCode, 'camera')
+          if (exactCode) {
+            observeDetectedBarcode(exactCode)
+            if (scanArmedRef.current) await processDetectedBarcode(exactCode, 'camera')
+          }
         }
       } catch {
         // Keep scanning; a single bad frame should not stop checkout.
@@ -2072,9 +2104,9 @@ function CustomerCheckout({ qrCode }) {
     return true
   }
 
-  async function startCamera() {
+  async function startCamera({ automatic = false } = {}) {
     setMessage('')
-    noteActivity(true)
+    if (!automatic) noteActivity(true)
 
     if (!window.isSecureContext) {
       setCameraState('blocked')
@@ -2124,7 +2156,7 @@ function CustomerCheckout({ qrCode }) {
         setScanResult((current) =>
           current?.status === 'reading'
             ? current
-            : { status: 'ready', code: '', label: 'Camera ready. Tap Scan when the barcode is in frame.' },
+            : { status: 'ready', code: '', label: 'Camera ready. Point at a barcode, then tap Scan.' },
         )
         return
       }
@@ -2149,7 +2181,8 @@ function CustomerCheckout({ qrCode }) {
         constraints,
         videoRef.current,
         async (result) => {
-          await processDetectedBarcode(result?.getText?.(), 'camera')
+          const exactCode = observeDetectedBarcode(result?.getText?.())
+          if (scanArmedRef.current) await processDetectedBarcode(exactCode, 'camera')
         },
       )
 
@@ -2157,7 +2190,7 @@ function CustomerCheckout({ qrCode }) {
       setScanResult((current) =>
         current?.status === 'reading'
           ? current
-          : { status: 'ready', code: '', label: 'Camera ready. Tap Scan when the barcode is in frame.' },
+          : { status: 'ready', code: '', label: 'Camera ready. Point at a barcode, then tap Scan.' },
       )
     } catch (error) {
       setCameraState('blocked')
@@ -2178,6 +2211,11 @@ function CustomerCheckout({ qrCode }) {
     if (cameraState !== 'scanning') {
       await startCamera()
     }
+
+    const latest = latestVisibleBarcodeRef.current
+    if (latest.code && Date.now() - latest.time <= 3500) {
+      await processDetectedBarcode(latest.code, 'camera')
+    }
   }
 
   function stopCamera() {
@@ -2188,6 +2226,7 @@ function CustomerCheckout({ qrCode }) {
     scannerControlsRef.current = null
     scannerReaderRef.current = null
     scanProcessingRef.current = false
+    latestVisibleBarcodeRef.current = { code: '', time: 0 }
 
     if (videoRef.current?.srcObject) {
       videoRef.current.srcObject.getTracks?.().forEach((track) => track.stop())
@@ -2420,7 +2459,7 @@ function CustomerCheckout({ qrCode }) {
               {cameraState === 'requesting'
                 ? 'Allow camera access in your browser'
                 : cameraState === 'scanning'
-                  ? 'Hold barcode inside the frame'
+                  ? 'Point at barcode, then tap Scan'
                   : 'Tap Scan below'}
             </p>
           </div>
