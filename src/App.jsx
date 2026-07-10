@@ -2629,12 +2629,14 @@ function ReceiptPage({ token }) {
       <section className="receipt-card">
         <p className="eyebrow">{order.merchant_profile?.store_name || 'Glide store'}</p>
         <h1>Receipt {order.order_number}</h1>
-        <SimpleList
-          rows={order.order_items.map((item) => ({
-            label: `${item.product_name} x ${item.quantity}`,
-            value: formatMoney(item.line_total),
-          }))}
-        />
+        <div className="receipt-items-panel">
+          <SimpleList
+            rows={order.order_items.map((item) => ({
+              label: `${item.product_name} x ${item.quantity}`,
+              value: formatMoney(item.line_total),
+            }))}
+          />
+        </div>
         <div className="cart-total">
           <span>Total paid</span>
           <strong>{formatMoney(order.total_amount)}</strong>

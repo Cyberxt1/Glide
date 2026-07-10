@@ -1799,6 +1799,44 @@ td a {
   border-color: rgba(23, 35, 29, 0.08);
 }
 
+.receipt-items-panel {
+  padding: 4px 12px;
+  border-radius: 16px;
+  background: #e9ece8;
+}
+
+.receipt-items-panel .simple-list {
+  border-top: 0;
+}
+
+.receipt-items-panel .simple-list div {
+  padding: 10px 0;
+  border-bottom-color: rgba(23, 35, 29, 0.12);
+}
+
+.receipt-items-panel .simple-list div:last-child {
+  border-bottom: 0;
+}
+
+.receipt-items-panel span {
+  color: #17231d;
+  font-weight: 760;
+}
+
+.receipt-items-panel strong,
+.receipt-card .cart-total strong {
+  flex: 0 0 auto;
+  max-width: none;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.receipt-items-panel strong {
+  color: var(--shop-green);
+  font-weight: 860;
+}
+
 .receipt-card .simple-list div,
 .receipt-card .cart-total {
   min-width: 0;
@@ -1807,7 +1845,7 @@ td a {
 .receipt-card .simple-list strong,
 .receipt-card .cart-total strong {
   max-width: 58%;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .receipt-barcode-panel {
@@ -1868,6 +1906,68 @@ td a {
     padding: 0;
     background: #ffffff;
     box-shadow: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .receipt-page {
+    padding: 12px 10px 22px;
+  }
+
+  .receipt-card {
+    padding: 14px;
+    border-radius: 18px;
+  }
+
+  .receipt-card h1 {
+    font-size: 28px;
+  }
+
+  .receipt-card .simple-list div,
+  .receipt-card .cart-total {
+    gap: 10px;
+    padding: 10px 0;
+  }
+
+  .receipt-items-panel {
+    padding: 2px 10px;
+    border-radius: 14px;
+  }
+
+  .receipt-items-panel .simple-list div {
+    padding: 9px 0;
+  }
+
+  .receipt-items-panel span {
+    font-size: 13px;
+    line-height: 1.25;
+  }
+
+  .receipt-items-panel strong {
+    font-size: 14px;
+  }
+
+  .receipt-card .cart-total strong {
+    font-size: 20px;
+  }
+
+  .receipt-card .cart-total span,
+  .receipt-card .simple-list span {
+    font-size: 13px;
+  }
+
+  .receipt-card .simple-list strong {
+    font-size: 13px;
+  }
+
+  .receipt-barcode-panel {
+    border-radius: 14px;
+  }
+
+  .receipt-exit-note {
+    padding: 10px 12px;
+    border-radius: 14px;
+    font-size: 13px;
   }
 }
 
