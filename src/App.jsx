@@ -1694,11 +1694,9 @@ function CustomerCheckout({ qrCode }) {
   const [sessionEnded, setSessionEnded] = useState(false)
   const [shopperSessionId, setShopperSessionId] = useState('')
   const [showSplash, setShowSplash] = useState(true)
-  const [showGuide, setShowGuide] = useState(false)
+  const [showIntro, setShowIntro] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
   const [activeTab, setActiveTab] = useState('scan')
-  const [showOptions, setShowOptions] = useState(false)
-  const [hasShownCameraGuide, setHasShownCameraGuide] = useState(false)
   const [barcode, setBarcode] = useState('')
   const [cart, setCart] = useState([])
   const [message, setMessage] = useState('')
@@ -1782,14 +1780,11 @@ function CustomerCheckout({ qrCode }) {
 
     const splashTimer = window.setTimeout(() => {
       setShowSplash(false)
-      if (!hasShownCameraGuide) {
-        setShowGuide(true)
-        setHasShownCameraGuide(true)
-      }
+      setShowIntro(true)
     }, 2000)
 
     return () => window.clearTimeout(splashTimer)
-  }, [hasShownCameraGuide, store])
+  }, [store])
 
   useEffect(
     () => () => {
@@ -2170,16 +2165,6 @@ function CustomerCheckout({ qrCode }) {
     }
   }
 
-  function toggleCamera() {
-    noteActivity()
-    if (cameraState === 'scanning' || cameraState === 'requesting') {
-      stopCamera()
-      return
-    }
-
-    startCamera()
-  }
-
   function stopCamera() {
     nativeScanStopRef.current?.()
     nativeScanStopRef.current = null
@@ -2224,9 +2209,8 @@ function CustomerCheckout({ qrCode }) {
     setAddToast(null)
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
     if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current)
-    setShowOptions(false)
+    setShowIntro(false)
     setShowHelp(false)
-    setHasShownCameraGuide(false)
     setActiveTab('scan')
     await destroyShopperSession(sessionIdToDestroy)
     await clearCheckoutCache()
@@ -2238,7 +2222,6 @@ function CustomerCheckout({ qrCode }) {
 
   function openHelp() {
     noteActivity()
-    setShowOptions(false)
     setShowHelp(true)
   }
 
@@ -2305,39 +2288,32 @@ function CustomerCheckout({ qrCode }) {
 
   return (
     <main className="shop-page">
-      {showGuide ? (
-        <div className="guide-backdrop" role="dialog" aria-modal="true">
-          <section className="guide-modal">
-            <p className="eyebrow">Start shopping</p>
-            <h1>Allow camera access to start scanning products and check out on your device.</h1>
-            <div className="action-row">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowGuide(false)
-                  setActiveTab('scan')
-                  startCamera()
-                }}
-              >
-                Allow camera access
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowGuide(false)
-                  setActiveTab('manual')
-                }}
-              >
-                Enter barcode instead
-              </button>
-            </div>
+      {showIntro ? (
+        <div
+          className="guide-backdrop"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setShowIntro(false)}
+        >
+          <section className="guide-modal" onClick={(event) => event.stopPropagation()}>
+            <p className="eyebrow">Welcome to Glide</p>
+            <h1>Scan products and checkout faster.</h1>
+            <p className="lead">Glide seamlessly through the store, pay on your device and show your receipt at the exit.</p>
+            <button type="button" onClick={() => setShowIntro(false)}>
+              Start shopping
+            </button>
           </section>
         </div>
       ) : null}
 
       {showHelp ? (
-        <div className="guide-backdrop" role="dialog" aria-modal="true">
-          <section className="guide-modal">
+        <div
+          className="guide-backdrop"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setShowHelp(false)}
+        >
+          <section className="guide-modal" onClick={(event) => event.stopPropagation()}>
             <p className="eyebrow">Help</p>
             <h1>How to shop with Glide</h1>
             <ol className="help-steps">
@@ -2362,26 +2338,12 @@ function CustomerCheckout({ qrCode }) {
         </div>
         <div className="shop-options">
           <button
-            className="options-button"
+            className="end-session-button"
             type="button"
-            aria-expanded={showOptions}
-            onClick={() => {
-              noteActivity()
-              setShowOptions((current) => !current)
-            }}
+            onClick={endSession}
           >
-            Menu
+            End
           </button>
-          {showOptions ? (
-            <div className="options-menu">
-              <button type="button" onClick={openHelp}>
-                Help
-              </button>
-              <button type="button" onClick={endSession}>
-                End session
-              </button>
-            </div>
-          ) : null}
         </div>
       </header>
 
@@ -2431,10 +2393,8 @@ function CustomerCheckout({ qrCode }) {
 
       {activeTab === 'scan' ? (
         <section className="scanner-panel">
-          <button
+          <div
             className={`scanner-window ${cameraState}`}
-            type="button"
-            onClick={toggleCamera}
           >
             <video ref={videoRef} muted playsInline />
             <div className="scan-frame">
@@ -2445,24 +2405,38 @@ function CustomerCheckout({ qrCode }) {
                 ? 'Allow camera access in your browser'
                 : cameraState === 'scanning'
                   ? 'Hold barcode inside the frame'
-                  : 'Tap to scan'}
+                  : 'Tap Scan below'}
             </p>
+          </div>
+          <button
+            className="scan-action-button"
+            type="button"
+            onClick={cameraState === 'scanning' || cameraState === 'requesting' ? stopCamera : startCamera}
+          >
+            {cameraState === 'scanning' || cameraState === 'requesting' ? 'Stop' : 'Scan'}
           </button>
           {scanResult ? (
             <div className={`scan-result ${scanResult.status}`} role="status">
               <span>
                 {scanResult.status === 'added'
-                  ? `You scanned ${scanResult.label}. Do you want to scan again?`
+                  ? `You scanned ${scanResult.label}.`
                   : scanResult.label}
               </span>
               {scanResult.code ? <strong>{scanResult.code}</strong> : null}
-              {scanResult.status === 'added' ? (
-                <button type="button" onClick={startCamera}>
-                  Yes, scan another item
-                </button>
-              ) : null}
             </div>
           ) : null}
+          <button
+            className="scan-cart-button"
+            type="button"
+            onClick={() => {
+              noteActivity()
+              setActiveTab('cart')
+            }}
+          >
+            <span>Cart</span>
+            <strong>{cartCount}</strong>
+            <small>{formatMoney(total)}</small>
+          </button>
         </section>
       ) : null}
 
@@ -2536,19 +2510,9 @@ function CustomerCheckout({ qrCode }) {
         </section>
       ) : null}
 
-      {activeTab !== 'cart' ? (
-        <button
-          className="cart-fab"
-          type="button"
-          onClick={() => {
-            noteActivity()
-            setActiveTab('cart')
-          }}
-        >
-          <span>{cartCount}</span>
-          <strong>{formatMoney(total)}</strong>
-        </button>
-      ) : null}
+      <button className="help-fab" type="button" onClick={openHelp}>
+        Help
+      </button>
     </main>
   )
 }
@@ -2556,8 +2520,14 @@ function CustomerCheckout({ qrCode }) {
 function PaymentReturn({ receiptToken }) {
   const [state, setState] = useState({ loading: true, error: '', receipt: null })
   const [email, setEmail] = useState('')
+  const [preferences, setPreferences] = useState({
+    receiptUpdates: true,
+    offers: false,
+    productUpdates: false,
+  })
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
+  const [showThanks, setShowThanks] = useState(true)
 
   useEffect(() => {
     const reference = new URLSearchParams(window.location.search).get('reference')
@@ -2566,7 +2536,13 @@ function PaymentReturn({ receiptToken }) {
       .catch((error) => setState({ loading: false, error: error.message, receipt: null }))
   }, [receiptToken])
 
-  async function saveEmail(event) {
+  useEffect(() => {
+    if (!state.receipt) return undefined
+    const timer = window.setTimeout(() => setShowThanks(false), 1800)
+    return () => window.clearTimeout(timer)
+  }, [state.receipt])
+
+  async function saveSignup(event) {
     event.preventDefault()
     setMessage('')
 
@@ -2578,12 +2554,35 @@ function PaymentReturn({ receiptToken }) {
     setBusy(true)
     try {
       await callFunction('save-receipt-email', { receiptToken, email }, false)
-      setMessage('Receipt email saved.')
+      await callFunction(
+        'save-shopper-signup',
+        { receiptToken, email, preferences },
+        false,
+      )
+      setMessage('Preferences saved.')
     } catch (error) {
       setMessage(error.message)
     } finally {
       setBusy(false)
     }
+  }
+
+  function updatePreference(field, checked) {
+    setPreferences((current) => ({ ...current, [field]: checked }))
+  }
+
+  const paidOrder = state.receipt?.order
+  const storeName = paidOrder?.merchant_profile?.store_name || 'this store'
+
+  if (paidOrder && showThanks) {
+    return (
+      <main className="payment-page">
+        <section className="thank-you-card">
+          <span>Thank you for shopping with us</span>
+          <strong>{storeName}</strong>
+        </section>
+      </main>
+    )
   }
 
   return (
@@ -2592,15 +2591,15 @@ function PaymentReturn({ receiptToken }) {
       {state.error ? <Notice tone="error">{state.error}</Notice> : null}
       {state.receipt ? (
         <section className="payment-card">
-          <p className="eyebrow">Payment complete</p>
-          <h1>Payment confirmed.</h1>
-          <p className="lead">Enter your email if you want it saved with this receipt, then show the receipt at the exit.</p>
+          <p className="eyebrow">Glide App</p>
+          <h1>Get your shopping updates.</h1>
+          <p className="lead">Enter your email and choose what you want to receive from Glide.</p>
           {message ? (
             <Notice tone={message.includes('saved') ? 'success' : 'warning'}>{message}</Notice>
           ) : null}
-          <form className="receipt-email-form" onSubmit={saveEmail}>
+          <form className="receipt-email-form" onSubmit={saveSignup}>
             <label>
-              Email for receipt
+              Email
               <input
                 type="email"
                 inputMode="email"
@@ -2609,13 +2608,44 @@ function PaymentReturn({ receiptToken }) {
                 onChange={(event) => setEmail(event.target.value)}
               />
             </label>
+            <div className="preference-list">
+              <label className="check-field">
+                <input
+                  checked={preferences.receiptUpdates}
+                  type="checkbox"
+                  onChange={(event) => updatePreference('receiptUpdates', event.target.checked)}
+                />
+                Receipt and payment updates
+              </label>
+              <label className="check-field">
+                <input
+                  checked={preferences.offers}
+                  type="checkbox"
+                  onChange={(event) => updatePreference('offers', event.target.checked)}
+                />
+                Store offers
+              </label>
+              <label className="check-field">
+                <input
+                  checked={preferences.productUpdates}
+                  type="checkbox"
+                  onChange={(event) => updatePreference('productUpdates', event.target.checked)}
+                />
+                Product and restock updates
+              </label>
+            </div>
             <button disabled={busy} type="submit">
-              {busy ? 'Saving...' : 'Save email'}
+              {busy ? 'Saving...' : 'Save preferences'}
             </button>
           </form>
-          <Link className="primary-action" href={`/receipt/${receiptToken}`}>
-            View receipt
-          </Link>
+          <div className="action-row">
+            <Link className="primary-action" href={`/receipt/${receiptToken}`}>
+              View receipt
+            </Link>
+            <button type="button" onClick={() => window.print()}>
+              Download receipt
+            </button>
+          </div>
         </section>
       ) : null}
     </main>
@@ -2690,7 +2720,12 @@ function ReceiptPage({ token }) {
           <svg ref={receiptBarcodeRef} aria-label="Receipt barcode" />
           <strong>{order.receipt_token}</strong>
         </div>
-        <Notice tone="success">Show this receipt at the exit for verification.</Notice>
+        <div className="receipt-actions">
+          <button type="button" onClick={() => window.print()}>
+            Download receipt
+          </button>
+        </div>
+        <p className="receipt-exit-note">Show this receipt at the exit for verification.</p>
       </section>
     </main>
   )

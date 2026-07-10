@@ -1189,7 +1189,9 @@ td a {
   top: 0;
   z-index: 14;
   align-items: start;
-  padding: 16px 0 14px;
+  width: 100vw;
+  margin-inline: calc(50% - 50vw);
+  padding: 16px max(14px, calc((100vw - 560px) / 2 + 14px)) 14px;
   border-bottom: 1px solid rgba(23, 35, 29, 0.1);
   background: linear-gradient(180deg, rgba(245, 239, 226, 0.98), rgba(245, 239, 226, 0.88));
   backdrop-filter: blur(16px);
@@ -1217,29 +1219,14 @@ td a {
   font-weight: 720;
 }
 
-.options-button {
+.end-session-button {
   min-width: 46px;
   min-height: 42px;
-  border-color: rgba(23, 35, 29, 0.14);
+  border: 0;
   border-radius: 999px;
-  color: var(--shop-ink);
-  background: rgba(255, 250, 240, 0.82);
-  box-shadow: 0 8px 20px rgba(23, 35, 29, 0.08);
-}
-
-.options-menu {
-  width: 178px;
-  gap: 2px;
-  padding: 8px;
-  border-color: rgba(23, 35, 29, 0.12);
-  border-radius: 14px;
-  background: #fffaf0;
-  box-shadow: 0 20px 42px rgba(23, 35, 29, 0.18);
-}
-
-.options-menu button {
-  min-height: 40px;
-  border-radius: 10px;
+  color: #fffaf0;
+  background: #d94d3f;
+  box-shadow: 0 10px 22px rgba(217, 77, 63, 0.24);
 }
 
 .shop-splash {
@@ -1285,7 +1272,7 @@ td a {
 
 .shop-tabs {
   position: sticky;
-  top: 78px;
+  top: 108px;
   z-index: 13;
   gap: 6px;
   padding: 6px;
@@ -1343,16 +1330,10 @@ td a {
   border: 0;
   border-radius: 24px;
   padding: 0;
-  cursor: pointer;
   background:
     linear-gradient(135deg, rgba(15, 107, 79, 0.18), rgba(216, 154, 79, 0.1)),
     #13211a;
   box-shadow: inset 0 0 0 1px rgba(255, 250, 240, 0.08), 0 20px 46px rgba(23, 35, 29, 0.18);
-}
-
-.scanner-window:focus-visible {
-  outline: 3px solid rgba(216, 154, 79, 0.75);
-  outline-offset: 3px;
 }
 
 .scanner-window video {
@@ -1428,6 +1409,53 @@ td a {
   border-radius: 999px;
   color: #fffaf0;
   background: var(--shop-green);
+}
+
+.scan-action-button {
+  width: 100%;
+  min-height: 48px;
+  border: 0;
+  border-radius: 999px;
+  color: #fffaf0;
+  background: var(--shop-green);
+  box-shadow: 0 12px 24px rgba(15, 107, 79, 0.2);
+}
+
+.scan-cart-button {
+  width: 100%;
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 18px;
+  color: #fffaf0;
+  background: var(--shop-ink);
+  box-shadow: 0 14px 28px rgba(23, 35, 29, 0.18);
+}
+
+.scan-cart-button span {
+  justify-self: start;
+  font-weight: 820;
+}
+
+.scan-cart-button strong {
+  min-width: 28px;
+  min-height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--shop-ink);
+  background: var(--shop-gold);
+  font-size: 13px;
+}
+
+.scan-cart-button small {
+  color: #fffaf0;
+  font-size: 13px;
+  font-weight: 820;
 }
 
 .scan-result.reading {
@@ -1654,6 +1682,23 @@ td a {
   box-shadow: 0 18px 36px rgba(23, 35, 29, 0.26);
 }
 
+.help-fab {
+  position: fixed;
+  right: max(14px, calc((100vw - 560px) / 2 + 14px));
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  z-index: 20;
+  width: auto;
+  min-width: 58px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--shop-ink);
+  background: var(--shop-gold);
+  box-shadow: 0 12px 24px rgba(23, 35, 29, 0.18);
+  font-size: 12px;
+}
+
 .cart-fab span {
   color: var(--shop-ink);
   background: var(--shop-gold);
@@ -1669,17 +1714,44 @@ td a {
   min-height: 100svh;
   display: grid;
   place-items: start center;
-  padding: 28px 16px;
+  padding: 28px max(18px, env(safe-area-inset-right)) 28px max(18px, env(safe-area-inset-left));
 }
 
 .payment-card,
 .receipt-card {
-  width: min(560px, 100%);
+  box-sizing: border-box;
+  width: min(560px, calc(100vw - 36px));
   padding: 24px;
   border: 1px solid rgba(23, 35, 29, 0.1);
   border-radius: 24px;
   background: rgba(255, 250, 240, 0.86);
   box-shadow: 0 22px 54px rgba(23, 35, 29, 0.12);
+}
+
+.thank-you-card {
+  width: min(560px, calc(100vw - 36px));
+  min-height: 62svh;
+  display: grid;
+  place-content: center;
+  gap: 12px;
+  padding: 28px;
+  border-radius: 26px;
+  color: var(--shop-ink);
+  background: rgba(255, 250, 240, 0.9);
+  text-align: center;
+  box-shadow: 0 22px 54px rgba(23, 35, 29, 0.12);
+}
+
+.thank-you-card span {
+  color: var(--shop-green);
+  font-size: 13px;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.thank-you-card strong {
+  font-size: clamp(36px, 12vw, 62px);
+  line-height: 1.05;
 }
 
 .payment-card h1,
@@ -1692,6 +1764,20 @@ td a {
   color: var(--shop-muted);
   font-size: 17px;
   line-height: 1.55;
+}
+
+.preference-list {
+  display: grid;
+  gap: 10px;
+  padding: 12px 0;
+}
+
+.preference-list .check-field {
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid rgba(23, 35, 29, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 250, 240, 0.72);
 }
 
 .receipt-card .simple-list,
@@ -1709,6 +1795,43 @@ td a {
 .receipt-barcode-panel span {
   color: var(--shop-green);
   letter-spacing: 0;
+}
+
+.receipt-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.receipt-actions button {
+  width: 100%;
+  border: 0;
+  border-radius: 999px;
+  color: #fffaf0;
+  background: var(--shop-green);
+}
+
+.receipt-exit-note {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  color: var(--shop-ink);
+  background: var(--shop-mint);
+  font-weight: 760;
+  line-height: 1.45;
+}
+
+@media print {
+  .receipt-actions,
+  .help-fab {
+    display: none;
+  }
+
+  .receipt-page,
+  .receipt-card {
+    padding: 0;
+    background: #ffffff;
+    box-shadow: none;
+  }
 }
 
 .skeleton-stack {

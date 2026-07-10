@@ -31,7 +31,7 @@ export async function handler(event) {
 
     const orderResult = await supabase
       .from('orders')
-      .select('*,order_items(*)')
+      .select('*,order_items(*),merchant_profile(store_name)')
       .eq('receipt_token', receiptToken)
       .single()
 
@@ -114,7 +114,7 @@ export async function handler(event) {
       })
       .eq('id', order.id)
       .eq('status', 'pending_payment')
-      .select('*,order_items(*)')
+      .select('*,order_items(*),merchant_profile(store_name)')
       .single()
 
     if (updated.error) return bad(updated.error.message)
