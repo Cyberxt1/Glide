@@ -2558,6 +2558,21 @@ function ReceiptPage({ token }) {
   const [loading, setLoading] = useState(true)
   const receiptBarcodeRef = useRef(null)
 
+  async function exitStore() {
+    const checkoutKeys = Object.keys(sessionStorage).filter((key) => key.startsWith('glide:checkout:'))
+    const sessionIds = checkoutKeys
+      .filter((key) => key.endsWith(':session'))
+      .map((key) => sessionStorage.getItem(key))
+      .filter(Boolean)
+
+    await Promise.allSettled(
+      sessionIds.map((sessionId) => callFunction('shopper-session', { action: 'end', sessionId }, false)),
+    )
+
+    checkoutKeys.forEach((key) => sessionStorage.removeItem(key))
+    window.location.assign('/')
+  }
+
   useEffect(() => {
     async function loadReceipt() {
       const { data } = await supabase
@@ -2640,6 +2655,9 @@ function ReceiptPage({ token }) {
         <div className="receipt-actions">
           <button type="button" onClick={() => window.print()}>
             Download receipt
+          </button>
+          <button className="receipt-exit-button" type="button" onClick={exitStore}>
+            Exit store
           </button>
         </div>
         <p className="receipt-exit-note">Show this receipt at the exit for verification.</p>

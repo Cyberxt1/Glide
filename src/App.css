@@ -1842,6 +1842,11 @@ td a {
   background: var(--shop-green);
 }
 
+.receipt-actions .receipt-exit-button {
+  color: var(--shop-ink);
+  background: #f4d35e;
+}
+
 .receipt-exit-note {
   margin: 0;
   padding: 12px 14px;
