@@ -581,7 +581,7 @@ function Dashboard() {
           </div>
 
           <div className="quick-actions">
-            <Link href="/dash/products" className="primary-action">
+            <Link href="/dash/products?action=add" className="primary-action">
               Add product
             </Link>
             <Link href="/dash/import" className="secondary-action">
@@ -707,12 +707,16 @@ async function loadDashboardSummaryFromClient() {
 }
 
 function Products() {
+  const pageSize = 100
   const [products, setProducts] = useState([])
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('all')
   const [editing, setEditing] = useState(null)
+  const [formOpen, setFormOpen] = useState(false)
+  const [barcodeProduct, setBarcodeProduct] = useState(null)
+  const [page, setPage] = useState(1)
 
   async function loadProducts() {
     setLoading(true)
@@ -734,6 +738,13 @@ function Products() {
     loadProducts()
   }, [])
 
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('action') === 'add') {
+      setEditing(null)
+      setFormOpen(true)
+    }
+  }, [])
+
   const categories = useMemo(
     () => ['all', ...new Set(products.map((product) => product.category).filter(Boolean))],
     [products],
@@ -745,60 +756,146 @@ function Products() {
     const matchesCategory = category === 'all' || product.category === category
     return matchesQuery && matchesCategory
   })
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
+  const safePage = Math.min(page, pageCount)
+  const visibleProducts = filtered.slice((safePage - 1) * pageSize, safePage * pageSize)
+  const showingEnd = Math.min(safePage * pageSize, filtered.length)
+  const lowStockTotal = filtered.filter(
+    (product) => product.track_inventory && product.quantity <= product.low_stock_threshold,
+  ).length
+
+  useEffect(() => {
+    setPage(1)
+  }, [query, category])
+
+  function openAddProduct() {
+    setEditing(null)
+    setFormOpen(true)
+  }
+
+  function openEditProduct(product) {
+    setEditing(product)
+    setFormOpen(true)
+  }
+
+  async function setProductAvailability(product, isAvailable) {
+    const { error } = await supabase
+      .from('products')
+      .update({ is_available: isAvailable })
+      .eq('id', product.id)
+
+    if (error) {
+      setMessage(error.message)
+      return
+    }
+
+    await loadProducts()
+  }
 
   return (
     <section className="dash-section">
-      <PageTitle title="Products" subtitle="Manage stock, prices, barcodes and availability." />
+      <div className="inventory-heading">
+        <PageTitle title="Products" subtitle="Manage stock, prices, barcodes and availability." />
+        <div className="inventory-actions">
+          <button type="button" onClick={openAddProduct}>
+            Add product
+          </button>
+          <Link className="secondary-action" href="/dash/import">
+            Import CSV
+          </Link>
+        </div>
+      </div>
       {message ? <Notice tone="warning">{message}</Notice> : null}
-      <ProductForm
-        product={editing || emptyProduct}
-        onDone={() => {
-          setEditing(null)
-          loadProducts()
-        }}
-        onCancel={() => setEditing(null)}
-      />
-      <div className="toolbar">
-        <input
-          placeholder="Search name, barcode or SKU"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-        <select value={category} onChange={(event) => setCategory(event.target.value)}>
-          {categories.map((item) => (
-            <option key={item} value={item}>
-              {item === 'all' ? 'All categories' : item}
-            </option>
-          ))}
-        </select>
+      {formOpen ? (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal-panel product-modal">
+            <ProductForm
+              product={editing || emptyProduct}
+              onDone={() => {
+                setEditing(null)
+                setFormOpen(false)
+                loadProducts()
+              }}
+              onCancel={() => {
+                setEditing(null)
+                setFormOpen(false)
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
+      {barcodeProduct ? (
+        <ProductBarcodeModal product={barcodeProduct} onClose={() => setBarcodeProduct(null)} />
+      ) : null}
+      <div className="inventory-toolbar">
+        <div className="toolbar">
+          <input
+            placeholder="Search name, barcode or SKU"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <select value={category} onChange={(event) => setCategory(event.target.value)}>
+            {categories.map((item) => (
+              <option key={item} value={item}>
+                {item === 'all' ? 'All categories' : item}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="inventory-counts">
+          <span>
+            Showing {filtered.length ? showingEnd : 0}/{filtered.length}
+          </span>
+          <span>{products.length} total</span>
+          <span>{lowStockTotal} low stock</span>
+        </div>
       </div>
       {loading ? (
         <LoadingRows />
-      ) : filtered.length ? (
-        <div className="table-wrap">
+      ) : visibleProducts.length ? (
+        <>
+          <div className="table-wrap compact-table">
           <table>
             <thead>
               <tr>
-                <th>Name</th>
+                <th>Product</th>
                 <th>Barcode</th>
                 <th>SKU</th>
-                <th>Category</th>
                 <th>Price</th>
-                <th>Stock</th>
+                <th>Inventory</th>
                 <th>Status</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((product) => (
+              {visibleProducts.map((product) => (
                 <tr key={product.id}>
-                  <td>{product.name}</td>
-                  <td>{product.barcode}</td>
+                  <td>
+                    <div className="product-cell">
+                      <strong>{product.name}</strong>
+                      <span>{product.category || 'Uncategorised'}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <button
+                      className="barcode-button"
+                      type="button"
+                      onClick={() => setBarcodeProduct(product)}
+                    >
+                      {product.barcode}
+                    </button>
+                  </td>
                   <td>{product.sku || 'Not set'}</td>
-                  <td>{product.category || 'Uncategorised'}</td>
                   <td>{formatMoney(product.price)}</td>
                   <td>
-                    {product.track_inventory ? product.quantity : 'Not tracked'}
+                    <div className="stock-cell">
+                      <strong>
+                        {product.track_inventory
+                          ? `${product.quantity}/${product.low_stock_threshold} min`
+                          : 'Not tracked'}
+                      </strong>
+                      {product.track_inventory ? <span>{product.quantity} units</span> : null}
+                    </div>
                     {product.track_inventory &&
                     product.quantity <= product.low_stock_threshold ? (
                       <StatusPill tone="warning">Low</StatusPill>
@@ -810,8 +907,14 @@ function Products() {
                     </StatusPill>
                   </td>
                   <td>
-                    <button type="button" onClick={() => setEditing(product)}>
+                    <button type="button" onClick={() => openEditProduct(product)}>
                       Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setProductAvailability(product, !product.is_available)}
+                    >
+                      {product.is_available ? 'Disable' : 'Enable'}
                     </button>
                     <button type="button" onClick={() => deleteProduct(product, loadProducts)}>
                       Delete
@@ -821,7 +924,23 @@ function Products() {
               ))}
             </tbody>
           </table>
-        </div>
+          </div>
+          <div className="pagination-row">
+            <button disabled={safePage <= 1} type="button" onClick={() => setPage((current) => current - 1)}>
+              Previous
+            </button>
+            <span>
+              Page {safePage}/{pageCount}
+            </span>
+            <button
+              disabled={safePage >= pageCount}
+              type="button"
+              onClick={() => setPage((current) => current + 1)}
+            >
+              Next
+            </button>
+          </div>
+        </>
       ) : (
         <EmptyState>No products match this view.</EmptyState>
       )}
@@ -972,6 +1091,56 @@ function StaffManagement() {
   )
 }
 
+function ProductBarcodeModal({ product, onClose }) {
+  const barcodeRef = useRef(null)
+
+  useEffect(() => {
+    if (!product?.barcode || !barcodeRef.current) return
+
+    async function renderBarcode() {
+      const { default: JsBarcode } = await import('jsbarcode')
+      if (!barcodeRef.current) return
+
+      JsBarcode(barcodeRef.current, product.barcode, {
+        format: 'CODE128',
+        width: 1.4,
+        height: 78,
+        margin: 12,
+        displayValue: true,
+        fontSize: 14,
+      })
+    }
+
+    renderBarcode()
+  }, [product])
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <section className="modal-panel barcode-modal">
+        <div className="modal-title-row">
+          <div>
+            <p className="eyebrow">Product barcode</p>
+            <h2>{product.name}</h2>
+          </div>
+          <button type="button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="barcode-preview">
+          <svg ref={barcodeRef} aria-label={`${product.name} barcode`} />
+        </div>
+        <SimpleList
+          rows={[
+            { label: 'Barcode', value: product.barcode },
+            { label: 'SKU', value: product.sku || 'Not set' },
+            { label: 'Price', value: formatMoney(product.price) },
+          ]}
+        />
+      </section>
+    </div>
+  )
+}
+
 function ProductForm({ product, onDone, onCancel }) {
   const [form, setForm] = useState(product)
   const [message, setMessage] = useState('')
@@ -1109,11 +1278,9 @@ function ProductForm({ product, onDone, onCancel }) {
       </div>
       <div className="action-row">
         <button type="submit">{isEdit ? 'Save changes' : 'Add product'}</button>
-        {isEdit ? (
-          <button type="button" onClick={onCancel}>
-            Cancel
-          </button>
-        ) : null}
+        <button type="button" onClick={onCancel}>
+          Cancel
+        </button>
       </div>
     </form>
   )
@@ -1404,7 +1571,6 @@ function CashierPage({ session }) {
   }
 
   function changeQuantity(product, delta) {
-    noteActivity()
     setCart((current) =>
       current
         .map((item) => {
@@ -1771,6 +1937,9 @@ function CustomerCheckout({ qrCode }) {
       price: data.price,
     })
     setScanResult({ status: 'added', code, label: data.name })
+    if (source === 'camera') {
+      stopCamera()
+    }
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
     toastTimerRef.current = window.setTimeout(() => {
       setAddToast(null)
@@ -1808,6 +1977,7 @@ function CustomerCheckout({ qrCode }) {
   }
 
   function changeQuantity(product, delta) {
+    noteActivity()
     setCart((current) =>
       current
         .map((item) => {
@@ -2037,6 +2207,9 @@ function CustomerCheckout({ qrCode }) {
 
   async function checkout() {
     noteActivity(true)
+    const confirmed = window.confirm('Have you confirmed everything in the cart is accurate?')
+    if (!confirmed) return
+
     setBusy(true)
     setMessage('')
     try {
@@ -2232,8 +2405,17 @@ function CustomerCheckout({ qrCode }) {
           </div>
           {scanResult ? (
             <div className={`scan-result ${scanResult.status}`} role="status">
-              <span>{scanResult.label}</span>
+              <span>
+                {scanResult.status === 'added'
+                  ? `You scanned ${scanResult.label}. Do you want to scan again?`
+                  : scanResult.label}
+              </span>
               {scanResult.code ? <strong>{scanResult.code}</strong> : null}
+              {scanResult.status === 'added' ? (
+                <button type="button" onClick={startCamera}>
+                  Scan another item
+                </button>
+              ) : null}
             </div>
           ) : null}
           <div className="action-row">
