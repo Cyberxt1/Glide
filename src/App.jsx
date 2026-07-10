@@ -1774,6 +1774,7 @@ function CustomerCheckout({ qrCode }) {
       markShopperActivity(nextSessionId, data)
     }
     loadStore()
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [activityStorageKey, cartStorageKey, qrCode, sessionStorageKey])
 
   useEffect(() => {
@@ -1845,26 +1846,21 @@ function CustomerCheckout({ qrCode }) {
   }, [networkWarningKey])
 
   async function markShopperActivity(sessionId = sessionIdRef.current, storeData = store, force = false) {
-    if (!sessionId || !supabase) return
+    if (!sessionId) return
 
     const now = Date.now()
     if (!force && now - activityWriteRef.current < SESSION_ACTIVITY_WRITE_MS) return
     activityWriteRef.current = now
 
-    const qrCodeId = storeData?.id || sessionMetaRef.current.qrCodeId
-    const merchantId = storeData?.merchant_id || sessionMetaRef.current.merchantId
-
     try {
-      await supabase.from('shopper_sessions').upsert(
+      await callFunction(
+        'shopper-session',
         {
-          session_id: sessionId,
-          qr_code_id: qrCodeId,
-          merchant_id: merchantId,
-          last_activity_at: new Date(now).toISOString(),
-          expires_at: new Date(now + SHOPPER_IDLE_TIMEOUT_MS).toISOString(),
-          ended_at: null,
+          action: 'touch',
+          sessionId,
+          qrCode: qrCode || storeData?.qr_code || sessionMetaRef.current.qrCode,
         },
-        { onConflict: 'session_id' },
+        false,
       )
     } catch {
       // The session table is optional until its migration is run.
@@ -1872,10 +1868,10 @@ function CustomerCheckout({ qrCode }) {
   }
 
   async function destroyShopperSession(sessionId = sessionIdRef.current) {
-    if (!sessionId || !supabase) return
+    if (!sessionId) return
 
     try {
-      await supabase.from('shopper_sessions').delete().eq('session_id', sessionId)
+      await callFunction('shopper-session', { action: 'end', sessionId }, false)
     } catch {
       // Local cleanup still matters if the remote session row is unavailable.
     }
@@ -2557,98 +2553,6 @@ function PaymentReturn({ receiptToken }) {
   )
 }
 
-function GlideAppSignup({ receiptToken }) {
-  const [email, setEmail] = useState('')
-  const [preferences, setPreferences] = useState({
-    receiptUpdates: true,
-    offers: false,
-    productUpdates: false,
-  })
-  const [message, setMessage] = useState('')
-  const [busy, setBusy] = useState(false)
-
-  async function saveSignup(event) {
-    event.preventDefault()
-    setMessage('')
-
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      setMessage('Enter a valid email address.')
-      return
-    }
-
-    setBusy(true)
-    try {
-      await callFunction('save-receipt-email', { receiptToken, email }, false)
-      await callFunction(
-        'save-shopper-signup',
-        { receiptToken, email, preferences },
-        false,
-      )
-      setMessage('You are in.')
-    } catch (error) {
-      setMessage(error.message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  function updatePreference(field, checked) {
-    setPreferences((current) => ({ ...current, [field]: checked }))
-  }
-
-  return (
-    <section className="payment-card glide-signup-card">
-      <p className="eyebrow">Glide App</p>
-      <h1>Be part of Glide's first App users.</h1>
-      <p className="lead">Enter your email to be glide in!!!</p>
-      {message ? (
-        <Notice tone={message.includes('in') ? 'success' : 'warning'}>{message}</Notice>
-      ) : null}
-      <form className="receipt-email-form" onSubmit={saveSignup}>
-        <label>
-          Email
-          <input
-            type="email"
-            inputMode="email"
-            placeholder="you@example.com"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-          />
-        </label>
-        <div className="preference-list">
-          <label className="check-field">
-            <input
-              checked={preferences.receiptUpdates}
-              type="checkbox"
-              onChange={(event) => updatePreference('receiptUpdates', event.target.checked)}
-            />
-            Receipt and payment updates
-          </label>
-          <label className="check-field">
-            <input
-              checked={preferences.offers}
-              type="checkbox"
-              onChange={(event) => updatePreference('offers', event.target.checked)}
-            />
-            Store offers
-          </label>
-          <label className="check-field">
-            <input
-              checked={preferences.productUpdates}
-              type="checkbox"
-              onChange={(event) => updatePreference('productUpdates', event.target.checked)}
-            />
-            Product and restock updates
-          </label>
-        </div>
-        <button disabled={busy} type="submit">
-          {busy ? 'Saving...' : 'Join Glide'}
-        </button>
-      </form>
-    </section>
-  )
-}
-
 function ReceiptPage({ token }) {
   const [order, setOrder] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -2740,7 +2644,6 @@ function ReceiptPage({ token }) {
         </div>
         <p className="receipt-exit-note">Show this receipt at the exit for verification.</p>
       </section>
-      {order.status === 'exited' ? <GlideAppSignup receiptToken={order.receipt_token} /> : null}
     </main>
   )
 }

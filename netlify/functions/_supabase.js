@@ -24,7 +24,11 @@ export function adminClient() {
 export function json(statusCode, body) {
   return {
     statusCode,
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    },
     body: JSON.stringify(body),
   }
 }

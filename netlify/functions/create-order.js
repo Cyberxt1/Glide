@@ -14,13 +14,19 @@ function fallbackEmail(shopperSessionId) {
 }
 
 function getSiteUrl(event) {
-  const origin = event.headers.origin || event.headers.Origin
-  if (origin) return origin
+  const configured = process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL
+  if (configured) return configured.startsWith('http') ? configured : `https://${configured}`
 
   const host = event.headers.host || event.headers.Host
-  if (host) return `https://${host}`
+  if (host) {
+    const protocol =
+      host.includes('localhost') || host.startsWith('127.') || host.startsWith('[::1]')
+        ? 'http'
+        : 'https'
+    return `${protocol}://${host}`
+  }
 
-  return process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL
+  return null
 }
 
 function paystackSecretKey() {

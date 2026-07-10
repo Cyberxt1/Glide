@@ -69,14 +69,35 @@ export async function handler(event) {
     const paystack = await parseProviderResponse(response)
 
     if (!response.ok || paystack.data?.status !== 'success') {
-      await supabase
-        .from('payments')
-        .update({ status: 'failed', provider_payload: paystack })
-        .eq('id', payment.id)
       return bad(paystack.message || 'Payment has not been confirmed.')
     }
 
-    for (const item of order.order_items) {
+    const updated = await supabase
+      .from('orders')
+      .update({
+        status: 'paid',
+        payment_status: 'paid',
+        paid_at: new Date().toISOString(),
+      })
+      .eq('id', order.id)
+      .eq('status', 'pending_payment')
+      .select('*,order_items(*),merchant_profile(store_name)')
+      .maybeSingle()
+
+    if (updated.error) return bad(updated.error.message)
+
+    if (!updated.data) {
+      const latest = await supabase
+        .from('orders')
+        .select('*,order_items(*),merchant_profile(store_name)')
+        .eq('id', order.id)
+        .single()
+
+      if (latest.error) return bad(latest.error.message)
+      return json(200, { order: latest.data })
+    }
+
+    for (const item of updated.data.order_items) {
       const productResult = await supabase
         .from('products')
         .select('id,quantity,track_inventory')
@@ -87,9 +108,9 @@ export async function handler(event) {
         const nextQuantity = Math.max(0, Number(productResult.data.quantity) - item.quantity)
         await supabase.from('products').update({ quantity: nextQuantity }).eq('id', item.product_id)
         await supabase.from('inventory_movements').insert({
-          merchant_id: order.merchant_id,
+          merchant_id: updated.data.merchant_id,
           product_id: item.product_id,
-          order_id: order.id,
+          order_id: updated.data.id,
           movement_type: 'sale',
           quantity_delta: -item.quantity,
         })
@@ -104,20 +125,6 @@ export async function handler(event) {
         paid_at: new Date().toISOString(),
       })
       .eq('id', payment.id)
-
-    const updated = await supabase
-      .from('orders')
-      .update({
-        status: 'paid',
-        payment_status: 'paid',
-        paid_at: new Date().toISOString(),
-      })
-      .eq('id', order.id)
-      .eq('status', 'pending_payment')
-      .select('*,order_items(*),merchant_profile(store_name)')
-      .single()
-
-    if (updated.error) return bad(updated.error.message)
 
     return json(200, { order: updated.data })
   } catch (error) {
