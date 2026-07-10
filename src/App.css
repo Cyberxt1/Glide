@@ -1231,6 +1231,43 @@ td a {
     #13211a;
 }
 
+.scan-result {
+  display: grid;
+  gap: 3px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  color: var(--shop-ink);
+  background: rgba(255, 250, 240, 0.78);
+  box-shadow: inset 0 0 0 1px rgba(23, 35, 29, 0.08);
+}
+
+.scan-result span {
+  color: var(--shop-muted);
+  font-size: 12px;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.scan-result strong {
+  color: var(--shop-ink);
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+.scan-result.reading {
+  background: #fff6df;
+}
+
+.scan-result.added,
+.scan-result.ready {
+  background: var(--shop-mint);
+}
+
+.scan-result.missing,
+.scan-result.blocked {
+  background: #f9e0dc;
+}
+
 .scanner-panel .action-row button,
 .barcode-form button,
 .cart-checkout-bar button,

@@ -21,6 +21,9 @@ const emptyProduct = {
   track_inventory: true,
 }
 
+const SHOPPER_IDLE_TIMEOUT_MS = 20 * 60 * 1000
+const SESSION_ACTIVITY_WRITE_MS = 15 * 1000
+
 function usePath() {
   const [path, setPath] = useState(window.location.pathname)
 
@@ -1401,6 +1404,7 @@ function CashierPage({ session }) {
   }
 
   function changeQuantity(product, delta) {
+    noteActivity()
     setCart((current) =>
       current
         .map((item) => {
@@ -1532,11 +1536,18 @@ function CustomerCheckout({ qrCode }) {
   const [barcode, setBarcode] = useState('')
   const [cart, setCart] = useState([])
   const [message, setMessage] = useState('')
+  const [networkWarning, setNetworkWarning] = useState('')
   const [busy, setBusy] = useState(false)
   const [cameraState, setCameraState] = useState('idle')
   const [addToast, setAddToast] = useState(null)
+  const [scanResult, setScanResult] = useState(null)
   const videoRef = useRef(null)
   const toastTimerRef = useRef(null)
+  const idleTimerRef = useRef(null)
+  const nativeScanStopRef = useRef(null)
+  const sessionIdRef = useRef('')
+  const sessionMetaRef = useRef({ qrCodeId: null, merchantId: null })
+  const activityWriteRef = useRef(0)
   const cartRef = useRef(cart)
   const scannerControlsRef = useRef(null)
   const scannerReaderRef = useRef(null)
@@ -1544,20 +1555,46 @@ function CustomerCheckout({ qrCode }) {
   const lastDetectedRef = useRef({ code: '', time: 0 })
   const sessionStorageKey = `glide:checkout:${qrCode}:session`
   const cartStorageKey = `glide:checkout:${qrCode}:cart`
+  const activityStorageKey = `glide:checkout:${qrCode}:lastActivity`
+  const networkWarningKey = `glide:checkout:${qrCode}:networkWarningShown`
 
   useEffect(() => {
     let nextSessionId = sessionStorage.getItem(sessionStorageKey)
+    const lastActivity = Number(sessionStorage.getItem(activityStorageKey) || Date.now())
+
+    if (nextSessionId && Date.now() - lastActivity >= SHOPPER_IDLE_TIMEOUT_MS) {
+      destroyShopperSession(nextSessionId)
+      sessionStorage.removeItem(sessionStorageKey)
+      sessionStorage.removeItem(cartStorageKey)
+      sessionStorage.removeItem(activityStorageKey)
+      nextSessionId = ''
+      setSessionEnded(true)
+      return undefined
+    }
+
     if (!nextSessionId) {
       nextSessionId = crypto.randomUUID()
       sessionStorage.setItem(sessionStorageKey, nextSessionId)
+      sessionStorage.setItem(activityStorageKey, String(Date.now()))
     }
 
+    sessionIdRef.current = nextSessionId
     setShopperSessionId(nextSessionId)
+
+    const savedCart = sessionStorage.getItem(cartStorageKey)
+    if (savedCart) {
+      try {
+        const parsedCart = JSON.parse(savedCart)
+        if (Array.isArray(parsedCart)) setCart(parsedCart)
+      } catch {
+        sessionStorage.removeItem(cartStorageKey)
+      }
+    }
 
     async function loadStore() {
       const { data, error } = await supabase
         .from('qr_codes')
-        .select('id,qr_code,is_active,merchant_profile(store_name)')
+        .select('id,merchant_id,qr_code,is_active,merchant_profile(store_name)')
         .eq('qr_code', qrCode)
         .maybeSingle()
 
@@ -1566,10 +1603,12 @@ function CustomerCheckout({ qrCode }) {
         return
       }
 
+      sessionMetaRef.current = { qrCodeId: data.id, merchantId: data.merchant_id }
       setStore(data)
+      markShopperActivity(nextSessionId, data)
     }
     loadStore()
-  }, [qrCode, sessionStorageKey])
+  }, [activityStorageKey, cartStorageKey, qrCode, sessionStorageKey])
 
   useEffect(() => {
     if (!store) return undefined
@@ -1589,6 +1628,7 @@ function CustomerCheckout({ qrCode }) {
     () => () => {
       stopCamera()
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+      if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current)
     },
     [],
   )
@@ -1602,8 +1642,99 @@ function CustomerCheckout({ qrCode }) {
     }
   }, [cart, cartStorageKey])
 
+  useEffect(() => {
+    if (!shopperSessionId || sessionEnded) return undefined
+
+    resetIdleTimer()
+    return () => {
+      if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shopperSessionId, sessionEnded])
+
+  useEffect(() => {
+    function checkNetworkQuality() {
+      if (sessionStorage.getItem(networkWarningKey)) return
+
+      const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection
+      const poorConnection =
+        !navigator.onLine ||
+        connection?.effectiveType === 'slow-2g' ||
+        connection?.effectiveType === '2g' ||
+        (Number(connection?.downlink) > 0 && Number(connection.downlink) < 1) ||
+        Number(connection?.rtt) > 800
+
+      if (!poorConnection) return
+
+      sessionStorage.setItem(networkWarningKey, 'true')
+      setNetworkWarning('Internet access is poor. Please connect to a good service.')
+    }
+
+    checkNetworkQuality()
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection
+    connection?.addEventListener?.('change', checkNetworkQuality)
+    window.addEventListener('offline', checkNetworkQuality)
+
+    return () => {
+      connection?.removeEventListener?.('change', checkNetworkQuality)
+      window.removeEventListener('offline', checkNetworkQuality)
+    }
+  }, [networkWarningKey])
+
+  async function markShopperActivity(sessionId = sessionIdRef.current, storeData = store, force = false) {
+    if (!sessionId || !supabase) return
+
+    const now = Date.now()
+    if (!force && now - activityWriteRef.current < SESSION_ACTIVITY_WRITE_MS) return
+    activityWriteRef.current = now
+
+    const qrCodeId = storeData?.id || sessionMetaRef.current.qrCodeId
+    const merchantId = storeData?.merchant_id || sessionMetaRef.current.merchantId
+
+    try {
+      await supabase.from('shopper_sessions').upsert(
+        {
+          session_id: sessionId,
+          qr_code_id: qrCodeId,
+          merchant_id: merchantId,
+          last_activity_at: new Date(now).toISOString(),
+          expires_at: new Date(now + SHOPPER_IDLE_TIMEOUT_MS).toISOString(),
+          ended_at: null,
+        },
+        { onConflict: 'session_id' },
+      )
+    } catch {
+      // The session table is optional until its migration is run.
+    }
+  }
+
+  async function destroyShopperSession(sessionId = sessionIdRef.current) {
+    if (!sessionId || !supabase) return
+
+    try {
+      await supabase.from('shopper_sessions').delete().eq('session_id', sessionId)
+    } catch {
+      // Local cleanup still matters if the remote session row is unavailable.
+    }
+  }
+
+  function resetIdleTimer() {
+    if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current)
+    idleTimerRef.current = window.setTimeout(() => {
+      endSession('idle')
+    }, SHOPPER_IDLE_TIMEOUT_MS)
+  }
+
+  function noteActivity(force = false) {
+    if (!sessionIdRef.current) return
+    sessionStorage.setItem(activityStorageKey, String(Date.now()))
+    resetIdleTimer()
+    markShopperActivity(sessionIdRef.current, store, force)
+  }
+
   async function addBarcodeFromValue(rawCode, source = 'manual') {
     setMessage('')
+    noteActivity()
     const code = String(rawCode || '').trim()
     if (!code) return false
 
@@ -1616,6 +1747,7 @@ function CustomerCheckout({ qrCode }) {
 
     if (error || !data) {
       setMessage(source === 'camera' ? `No product found for ${code}.` : 'Product not found or unavailable.')
+      setScanResult({ status: 'missing', code, label: 'No product found' })
       return false
     }
 
@@ -1623,6 +1755,7 @@ function CustomerCheckout({ qrCode }) {
     const nextQuantity = (existing?.cartQuantity || 0) + 1
     if (data.track_inventory && nextQuantity > data.quantity) {
       setMessage('This item is out of stock.')
+      setScanResult({ status: 'blocked', code, label: 'Out of stock' })
       return false
     }
 
@@ -1637,12 +1770,36 @@ function CustomerCheckout({ qrCode }) {
       name: data.name,
       price: data.price,
     })
+    setScanResult({ status: 'added', code, label: data.name })
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
     toastTimerRef.current = window.setTimeout(() => {
       setAddToast(null)
     }, 1800)
     setBarcode('')
     return true
+  }
+
+  async function processDetectedBarcode(rawCode, source = 'camera') {
+    const exactCode = String(rawCode || '').trim()
+    const now = Date.now()
+
+    if (
+      !exactCode ||
+      scanProcessingRef.current ||
+      (lastDetectedRef.current.code === exactCode && now - lastDetectedRef.current.time <= 1200)
+    ) {
+      return
+    }
+
+    scanProcessingRef.current = true
+    lastDetectedRef.current = { code: exactCode, time: now }
+    setScanResult({ status: 'reading', code: exactCode, label: 'Reading barcode' })
+
+    try {
+      await addBarcodeFromValue(exactCode, source)
+    } finally {
+      scanProcessingRef.current = false
+    }
   }
 
   async function addBarcode(event) {
@@ -1666,8 +1823,70 @@ function CustomerCheckout({ qrCode }) {
   const total = cart.reduce((sum, item) => sum + item.price * item.cartQuantity, 0)
   const cartCount = cart.reduce((sum, item) => sum + item.cartQuantity, 0)
 
+  async function startNativeBarcodeScanner(stream) {
+    if (!('BarcodeDetector' in window) || !videoRef.current) return false
+
+    const allFormats = [
+      'ean_13',
+      'ean_8',
+      'upc_a',
+      'upc_e',
+      'code_128',
+      'code_39',
+      'itf',
+      'codabar',
+    ]
+    const supportedFormats = window.BarcodeDetector.getSupportedFormats
+      ? await window.BarcodeDetector.getSupportedFormats()
+      : allFormats
+    const formats = allFormats.filter((format) => supportedFormats.includes(format))
+
+    if (!formats.length) return false
+
+    const detector = new window.BarcodeDetector({ formats })
+    let stopped = false
+    let frameId = 0
+    let videoFrameId = 0
+    const video = videoRef.current
+
+    video.srcObject = stream
+    await video.play()
+
+    async function scanFrame() {
+      if (stopped || !videoRef.current) return
+
+      try {
+        if (video.readyState >= 2 && !scanProcessingRef.current) {
+          const detected = await detector.detect(video)
+          const exactCode = detected?.[0]?.rawValue
+          if (exactCode) await processDetectedBarcode(exactCode, 'camera')
+        }
+      } catch {
+        // Keep scanning; a single bad frame should not stop checkout.
+      }
+
+      if (video.requestVideoFrameCallback) {
+        videoFrameId = video.requestVideoFrameCallback(scanFrame)
+      } else {
+        frameId = window.requestAnimationFrame(scanFrame)
+      }
+    }
+
+    nativeScanStopRef.current = () => {
+      stopped = true
+      if (frameId) window.cancelAnimationFrame(frameId)
+      if (videoFrameId && video.cancelVideoFrameCallback) {
+        video.cancelVideoFrameCallback(videoFrameId)
+      }
+    }
+
+    scanFrame()
+    return true
+  }
+
   async function startCamera() {
     setMessage('')
+    noteActivity(true)
 
     if (!window.isSecureContext) {
       setCameraState('blocked')
@@ -1701,6 +1920,25 @@ function CustomerCheckout({ qrCode }) {
         throw new Error('Camera preview is not ready. Try again.')
       }
 
+      const constraints = {
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      }
+      const nativeStream = await navigator.mediaDevices.getUserMedia(constraints)
+      const nativeStarted = await startNativeBarcodeScanner(nativeStream)
+
+      if (nativeStarted) {
+        setCameraState('scanning')
+        setScanResult({ status: 'ready', code: '', label: 'Scanner ready' })
+        return
+      }
+
+      nativeStream.getTracks().forEach((track) => track.stop())
+
       const { BarcodeFormat, BrowserMultiFormatReader } = await import('@zxing/browser')
       const scanner = new BrowserMultiFormatReader()
       scanner.possibleFormats = [
@@ -1716,39 +1954,15 @@ function CustomerCheckout({ qrCode }) {
 
       scannerReaderRef.current = scanner
       scannerControlsRef.current = await scanner.decodeFromConstraints(
-        {
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-          audio: false,
-        },
+        constraints,
         videoRef.current,
         async (result) => {
-          const exactCode = result?.getText?.()?.trim()
-          const now = Date.now()
-
-          if (
-            !exactCode ||
-            scanProcessingRef.current ||
-            (lastDetectedRef.current.code === exactCode &&
-              now - lastDetectedRef.current.time <= 1800)
-          ) {
-            return
-          }
-
-          scanProcessingRef.current = true
-          lastDetectedRef.current = { code: exactCode, time: now }
-          try {
-            await addBarcodeFromValue(exactCode, 'camera')
-          } finally {
-            scanProcessingRef.current = false
-          }
+          await processDetectedBarcode(result?.getText?.(), 'camera')
         },
       )
 
       setCameraState('scanning')
+      setScanResult({ status: 'ready', code: '', label: 'Scanner ready' })
     } catch (error) {
       setCameraState('blocked')
       const blockedMessage =
@@ -1760,18 +1974,25 @@ function CustomerCheckout({ qrCode }) {
   }
 
   function stopCamera() {
+    nativeScanStopRef.current?.()
+    nativeScanStopRef.current = null
     scannerControlsRef.current?.stop()
     scannerControlsRef.current = null
     scannerReaderRef.current = null
     scanProcessingRef.current = false
 
-    if (videoRef.current) videoRef.current.srcObject = null
+    if (videoRef.current?.srcObject) {
+      videoRef.current.srcObject.getTracks?.().forEach((track) => track.stop())
+      videoRef.current.srcObject = null
+    }
     setCameraState((current) => (current === 'scanning' || current === 'requesting' ? 'idle' : current))
   }
 
   async function clearCheckoutCache() {
     sessionStorage.removeItem(sessionStorageKey)
     sessionStorage.removeItem(cartStorageKey)
+    sessionStorage.removeItem(activityStorageKey)
+    sessionStorage.removeItem(networkWarningKey)
     localStorage.removeItem(sessionStorageKey)
     localStorage.removeItem(cartStorageKey)
 
@@ -1785,29 +2006,37 @@ function CustomerCheckout({ qrCode }) {
     }
   }
 
-  async function endSession() {
+  async function endSession(reason = 'manual') {
+    const sessionIdToDestroy = sessionIdRef.current || shopperSessionId
     stopCamera()
     setCart([])
     setBarcode('')
     setMessage('')
+    setNetworkWarning('')
+    setScanResult(null)
     setAddToast(null)
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+    if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current)
     setShowOptions(false)
     setShowHelp(false)
     setHasShownCameraGuide(false)
     setActiveTab('scan')
+    await destroyShopperSession(sessionIdToDestroy)
     await clearCheckoutCache()
+    sessionIdRef.current = ''
     setShopperSessionId('')
     setSessionEnded(true)
-    window.close()
+    if (reason === 'manual') window.close()
   }
 
   function openHelp() {
+    noteActivity()
     setShowOptions(false)
     setShowHelp(true)
   }
 
   async function checkout() {
+    noteActivity(true)
     setBusy(true)
     setMessage('')
     try {
@@ -1922,7 +2151,10 @@ function CustomerCheckout({ qrCode }) {
             className="options-button"
             type="button"
             aria-expanded={showOptions}
-            onClick={() => setShowOptions((current) => !current)}
+            onClick={() => {
+              noteActivity()
+              setShowOptions((current) => !current)
+            }}
           >
             Menu
           </button>
@@ -1943,26 +2175,36 @@ function CustomerCheckout({ qrCode }) {
         <button
           className={activeTab === 'scan' ? 'active' : ''}
           type="button"
-          onClick={() => setActiveTab('scan')}
+          onClick={() => {
+            noteActivity()
+            setActiveTab('scan')
+          }}
         >
           Scan
         </button>
         <button
           className={activeTab === 'manual' ? 'active' : ''}
           type="button"
-          onClick={() => setActiveTab('manual')}
+          onClick={() => {
+            noteActivity()
+            setActiveTab('manual')
+          }}
         >
           Manual
         </button>
         <button
           className={activeTab === 'cart' ? 'active' : ''}
           type="button"
-          onClick={() => setActiveTab('cart')}
+          onClick={() => {
+            noteActivity()
+            setActiveTab('cart')
+          }}
         >
           Cart
         </button>
       </nav>
 
+      {networkWarning ? <Notice tone="warning">{networkWarning}</Notice> : null}
       {message ? <Notice tone="warning">{message}</Notice> : null}
 
       {addToast ? (
@@ -1988,6 +2230,12 @@ function CustomerCheckout({ qrCode }) {
                   : 'Tap Start camera to scan'}
             </p>
           </div>
+          {scanResult ? (
+            <div className={`scan-result ${scanResult.status}`} role="status">
+              <span>{scanResult.label}</span>
+              {scanResult.code ? <strong>{scanResult.code}</strong> : null}
+            </div>
+          ) : null}
           <div className="action-row">
             <button type="button" onClick={startCamera}>
               {cameraState === 'scanning' ? 'Scanning' : 'Start camera'}
@@ -2070,7 +2318,14 @@ function CustomerCheckout({ qrCode }) {
       ) : null}
 
       {activeTab !== 'cart' ? (
-        <button className="cart-fab" type="button" onClick={() => setActiveTab('cart')}>
+        <button
+          className="cart-fab"
+          type="button"
+          onClick={() => {
+            noteActivity()
+            setActiveTab('cart')
+          }}
+        >
           <span>{cartCount}</span>
           <strong>{formatMoney(total)}</strong>
         </button>

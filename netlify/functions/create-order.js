@@ -40,6 +40,30 @@ async function parseProviderResponse(response) {
   }
 }
 
+async function ensureShopperSessionIsActive(supabase, shopperSessionId) {
+  if (!shopperSessionId) return null
+
+  const sessionResult = await supabase
+    .from('shopper_sessions')
+    .select('id,ended_at,expires_at')
+    .eq('session_id', shopperSessionId)
+    .maybeSingle()
+
+  if (sessionResult.error) return null
+  if (!sessionResult.data) return null
+
+  if (sessionResult.data.ended_at) {
+    throw new Error('This checkout session has ended. Scan the store QR again to start a new session.')
+  }
+
+  if (new Date(sessionResult.data.expires_at).getTime() <= Date.now()) {
+    await supabase.from('shopper_sessions').delete().eq('session_id', shopperSessionId)
+    throw new Error('This checkout session was idle for too long. Scan the store QR again to start a new session.')
+  }
+
+  return sessionResult.data
+}
+
 export async function handler(event) {
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed.' })
 
@@ -59,6 +83,12 @@ export async function handler(event) {
 
     if (!secretKey.startsWith('sk_')) {
       return bad('Paystack secret key must be a secret key that starts with sk_.')
+    }
+
+    try {
+      await ensureShopperSessionIsActive(supabase, shopperSessionId)
+    } catch (sessionError) {
+      return bad(sessionError.message)
     }
 
     const siteUrl = getSiteUrl(event)
