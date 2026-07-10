@@ -1716,6 +1716,7 @@ function CustomerCheckout({ qrCode }) {
   const cartRef = useRef(cart)
   const scannerControlsRef = useRef(null)
   const scannerReaderRef = useRef(null)
+  const scanArmedRef = useRef(false)
   const scanProcessingRef = useRef(false)
   const lastDetectedRef = useRef({ code: '', time: 0 })
   const sessionStorageKey = `glide:checkout:${qrCode}:session`
@@ -1934,9 +1935,6 @@ function CustomerCheckout({ qrCode }) {
     })
     setScanResult({ status: 'added', code, label: data.name })
     playScanSound()
-    if (source === 'camera') {
-      stopCamera()
-    }
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
     toastTimerRef.current = window.setTimeout(() => {
       setAddToast(null)
@@ -1976,12 +1974,14 @@ function CustomerCheckout({ qrCode }) {
 
     if (
       !exactCode ||
+      !scanArmedRef.current ||
       scanProcessingRef.current ||
       (lastDetectedRef.current.code === exactCode && now - lastDetectedRef.current.time <= 1200)
     ) {
       return
     }
 
+    scanArmedRef.current = false
     scanProcessingRef.current = true
     lastDetectedRef.current = { code: exactCode, time: now }
     setScanResult({ status: 'reading', code: exactCode, label: 'Reading barcode' })
@@ -2125,7 +2125,11 @@ function CustomerCheckout({ qrCode }) {
 
       if (nativeStarted) {
         setCameraState('scanning')
-        setScanResult({ status: 'ready', code: '', label: 'Scanner ready' })
+        setScanResult((current) =>
+          current?.status === 'reading'
+            ? current
+            : { status: 'ready', code: '', label: 'Camera ready. Tap Scan when the barcode is in frame.' },
+        )
         return
       }
 
@@ -2154,7 +2158,11 @@ function CustomerCheckout({ qrCode }) {
       )
 
       setCameraState('scanning')
-      setScanResult({ status: 'ready', code: '', label: 'Scanner ready' })
+      setScanResult((current) =>
+        current?.status === 'reading'
+          ? current
+          : { status: 'ready', code: '', label: 'Camera ready. Tap Scan when the barcode is in frame.' },
+      )
     } catch (error) {
       setCameraState('blocked')
       const blockedMessage =
@@ -2165,7 +2173,19 @@ function CustomerCheckout({ qrCode }) {
     }
   }
 
+  async function armScanner() {
+    noteActivity(true)
+    setMessage('')
+    scanArmedRef.current = true
+    setScanResult({ status: 'reading', code: '', label: 'Looking for barcode' })
+
+    if (cameraState !== 'scanning') {
+      await startCamera()
+    }
+  }
+
   function stopCamera() {
+    scanArmedRef.current = false
     nativeScanStopRef.current?.()
     nativeScanStopRef.current = null
     scannerControlsRef.current?.stop()
@@ -2411,9 +2431,9 @@ function CustomerCheckout({ qrCode }) {
           <button
             className="scan-action-button"
             type="button"
-            onClick={cameraState === 'scanning' || cameraState === 'requesting' ? stopCamera : startCamera}
+            onClick={armScanner}
           >
-            {cameraState === 'scanning' || cameraState === 'requesting' ? 'Stop' : 'Scan'}
+            {scanResult?.status === 'reading' ? 'Scanning...' : 'Scan'}
           </button>
           {scanResult ? (
             <div className={`scan-result ${scanResult.status}`} role="status">
@@ -2518,7 +2538,26 @@ function CustomerCheckout({ qrCode }) {
 }
 
 function PaymentReturn({ receiptToken }) {
-  const [state, setState] = useState({ loading: true, error: '', receipt: null })
+  const [state, setState] = useState({ loading: true, error: '' })
+
+  useEffect(() => {
+    const reference = new URLSearchParams(window.location.search).get('reference')
+    callFunction('verify-payment', { receiptToken, reference }, false)
+      .then(() => {
+        window.location.replace(`/receipt/${receiptToken}`)
+      })
+      .catch((error) => setState({ loading: false, error: error.message }))
+  }, [receiptToken])
+
+  return (
+    <main className="payment-page">
+      {state.loading ? <LoadingRows /> : null}
+      {state.error ? <Notice tone="error">{state.error}</Notice> : null}
+    </main>
+  )
+}
+
+function GlideAppSignup({ receiptToken }) {
   const [email, setEmail] = useState('')
   const [preferences, setPreferences] = useState({
     receiptUpdates: true,
@@ -2527,20 +2566,6 @@ function PaymentReturn({ receiptToken }) {
   })
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
-  const [showThanks, setShowThanks] = useState(true)
-
-  useEffect(() => {
-    const reference = new URLSearchParams(window.location.search).get('reference')
-    callFunction('verify-payment', { receiptToken, reference }, false)
-      .then((data) => setState({ loading: false, error: '', receipt: data }))
-      .catch((error) => setState({ loading: false, error: error.message, receipt: null }))
-  }, [receiptToken])
-
-  useEffect(() => {
-    if (!state.receipt) return undefined
-    const timer = window.setTimeout(() => setShowThanks(false), 1800)
-    return () => window.clearTimeout(timer)
-  }, [state.receipt])
 
   async function saveSignup(event) {
     event.preventDefault()
@@ -2559,7 +2584,7 @@ function PaymentReturn({ receiptToken }) {
         { receiptToken, email, preferences },
         false,
       )
-      setMessage('Preferences saved.')
+      setMessage('You are in.')
     } catch (error) {
       setMessage(error.message)
     } finally {
@@ -2571,84 +2596,56 @@ function PaymentReturn({ receiptToken }) {
     setPreferences((current) => ({ ...current, [field]: checked }))
   }
 
-  const paidOrder = state.receipt?.order
-  const storeName = paidOrder?.merchant_profile?.store_name || 'this store'
-
-  if (paidOrder && showThanks) {
-    return (
-      <main className="payment-page">
-        <section className="thank-you-card">
-          <span>Thank you for shopping with us</span>
-          <strong>{storeName}</strong>
-        </section>
-      </main>
-    )
-  }
-
   return (
-    <main className="payment-page">
-      {state.loading ? <LoadingRows /> : null}
-      {state.error ? <Notice tone="error">{state.error}</Notice> : null}
-      {state.receipt ? (
-        <section className="payment-card">
-          <p className="eyebrow">Glide App</p>
-          <h1>Get your shopping updates.</h1>
-          <p className="lead">Enter your email and choose what you want to receive from Glide.</p>
-          {message ? (
-            <Notice tone={message.includes('saved') ? 'success' : 'warning'}>{message}</Notice>
-          ) : null}
-          <form className="receipt-email-form" onSubmit={saveSignup}>
-            <label>
-              Email
-              <input
-                type="email"
-                inputMode="email"
-                placeholder="you@example.com"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-              />
-            </label>
-            <div className="preference-list">
-              <label className="check-field">
-                <input
-                  checked={preferences.receiptUpdates}
-                  type="checkbox"
-                  onChange={(event) => updatePreference('receiptUpdates', event.target.checked)}
-                />
-                Receipt and payment updates
-              </label>
-              <label className="check-field">
-                <input
-                  checked={preferences.offers}
-                  type="checkbox"
-                  onChange={(event) => updatePreference('offers', event.target.checked)}
-                />
-                Store offers
-              </label>
-              <label className="check-field">
-                <input
-                  checked={preferences.productUpdates}
-                  type="checkbox"
-                  onChange={(event) => updatePreference('productUpdates', event.target.checked)}
-                />
-                Product and restock updates
-              </label>
-            </div>
-            <button disabled={busy} type="submit">
-              {busy ? 'Saving...' : 'Save preferences'}
-            </button>
-          </form>
-          <div className="action-row">
-            <Link className="primary-action" href={`/receipt/${receiptToken}`}>
-              View receipt
-            </Link>
-            <button type="button" onClick={() => window.print()}>
-              Download receipt
-            </button>
-          </div>
-        </section>
+    <section className="payment-card glide-signup-card">
+      <p className="eyebrow">Glide App</p>
+      <h1>Be part of Glide's first App users.</h1>
+      <p className="lead">Enter your email to be glide in!!!</p>
+      {message ? (
+        <Notice tone={message.includes('in') ? 'success' : 'warning'}>{message}</Notice>
       ) : null}
-    </main>
+      <form className="receipt-email-form" onSubmit={saveSignup}>
+        <label>
+          Email
+          <input
+            type="email"
+            inputMode="email"
+            placeholder="you@example.com"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+        </label>
+        <div className="preference-list">
+          <label className="check-field">
+            <input
+              checked={preferences.receiptUpdates}
+              type="checkbox"
+              onChange={(event) => updatePreference('receiptUpdates', event.target.checked)}
+            />
+            Receipt and payment updates
+          </label>
+          <label className="check-field">
+            <input
+              checked={preferences.offers}
+              type="checkbox"
+              onChange={(event) => updatePreference('offers', event.target.checked)}
+            />
+            Store offers
+          </label>
+          <label className="check-field">
+            <input
+              checked={preferences.productUpdates}
+              type="checkbox"
+              onChange={(event) => updatePreference('productUpdates', event.target.checked)}
+            />
+            Product and restock updates
+          </label>
+        </div>
+        <button disabled={busy} type="submit">
+          {busy ? 'Saving...' : 'Join Glide'}
+        </button>
+      </form>
+    </section>
   )
 }
 
@@ -2669,6 +2666,22 @@ function ReceiptPage({ token }) {
     }
     loadReceipt()
   }, [token])
+
+  useEffect(() => {
+    if (!order || order.status === 'exited') return undefined
+
+    const interval = window.setInterval(async () => {
+      const { data } = await supabase
+        .from('orders')
+        .select('*,order_items(*),merchant_profile(store_name)')
+        .eq('receipt_token', token)
+        .maybeSingle()
+
+      if (data) setOrder(data)
+    }, 5000)
+
+    return () => window.clearInterval(interval)
+  }, [order, token])
 
   useEffect(() => {
     if (!order?.receipt_token || !receiptBarcodeRef.current) return
@@ -2727,6 +2740,7 @@ function ReceiptPage({ token }) {
         </div>
         <p className="receipt-exit-note">Show this receipt at the exit for verification.</p>
       </section>
+      {order.status === 'exited' ? <GlideAppSignup receiptToken={order.receipt_token} /> : null}
     </main>
   )
 }
