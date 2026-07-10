@@ -1711,6 +1711,7 @@ function CustomerCheckout({ qrCode }) {
   const toastTimerRef = useRef(null)
   const idleTimerRef = useRef(null)
   const nativeScanStopRef = useRef(null)
+  const audioContextRef = useRef(null)
   const sessionIdRef = useRef('')
   const sessionMetaRef = useRef({ qrCodeId: null, merchantId: null })
   const activityWriteRef = useRef(0)
@@ -1937,6 +1938,7 @@ function CustomerCheckout({ qrCode }) {
       price: data.price,
     })
     setScanResult({ status: 'added', code, label: data.name })
+    playScanSound()
     if (source === 'camera') {
       stopCamera()
     }
@@ -1946,6 +1948,31 @@ function CustomerCheckout({ qrCode }) {
     }, 1800)
     setBarcode('')
     return true
+  }
+
+  function playScanSound() {
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext
+      if (!AudioContext) return
+
+      const audioContext = audioContextRef.current || new AudioContext()
+      audioContextRef.current = audioContext
+      const oscillator = audioContext.createOscillator()
+      const gain = audioContext.createGain()
+
+      oscillator.type = 'sine'
+      oscillator.frequency.setValueAtTime(880, audioContext.currentTime)
+      oscillator.frequency.exponentialRampToValueAtTime(1320, audioContext.currentTime + 0.08)
+      gain.gain.setValueAtTime(0.001, audioContext.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.18, audioContext.currentTime + 0.01)
+      gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.14)
+      oscillator.connect(gain)
+      gain.connect(audioContext.destination)
+      oscillator.start()
+      oscillator.stop(audioContext.currentTime + 0.15)
+    } catch {
+      // Audio feedback is optional; scanning must keep working if audio is blocked.
+    }
   }
 
   async function processDetectedBarcode(rawCode, source = 'camera') {
@@ -2141,6 +2168,16 @@ function CustomerCheckout({ qrCode }) {
           : error.message || 'Camera access was blocked. Use manual entry or allow camera access.'
       setMessage(blockedMessage)
     }
+  }
+
+  function toggleCamera() {
+    noteActivity()
+    if (cameraState === 'scanning' || cameraState === 'requesting') {
+      stopCamera()
+      return
+    }
+
+    startCamera()
   }
 
   function stopCamera() {
@@ -2390,7 +2427,11 @@ function CustomerCheckout({ qrCode }) {
 
       {activeTab === 'scan' ? (
         <section className="scanner-panel">
-          <div className={`scanner-window ${cameraState}`}>
+          <button
+            className={`scanner-window ${cameraState}`}
+            type="button"
+            onClick={toggleCamera}
+          >
             <video ref={videoRef} muted playsInline />
             <div className="scan-frame">
               <span />
@@ -2400,9 +2441,9 @@ function CustomerCheckout({ qrCode }) {
                 ? 'Allow camera access in your browser'
                 : cameraState === 'scanning'
                   ? 'Hold barcode inside the frame'
-                  : 'Tap Start camera to scan'}
+                  : 'Tap to scan'}
             </p>
-          </div>
+          </button>
           {scanResult ? (
             <div className={`scan-result ${scanResult.status}`} role="status">
               <span>
@@ -2413,19 +2454,11 @@ function CustomerCheckout({ qrCode }) {
               {scanResult.code ? <strong>{scanResult.code}</strong> : null}
               {scanResult.status === 'added' ? (
                 <button type="button" onClick={startCamera}>
-                  Scan another item
+                  Yes, scan another item
                 </button>
               ) : null}
             </div>
           ) : null}
-          <div className="action-row">
-            <button type="button" onClick={startCamera}>
-              {cameraState === 'scanning' ? 'Scanning' : 'Start camera'}
-            </button>
-            <button type="button" onClick={stopCamera}>
-              Stop camera
-            </button>
-          </div>
         </section>
       ) : null}
 
