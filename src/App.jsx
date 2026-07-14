@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Papa from 'papaparse'
 import QRCode from 'qrcode'
 import './App.css'
@@ -7,7 +7,7 @@ import { formatDateTime, formatMoney } from './lib/format'
 import { getConfigMessage, isSupabaseConfigured, supabase } from './lib/supabase'
 
 const productColumns =
-  'id,name,barcode,sku,category,price,quantity,low_stock_threshold,is_available,track_inventory,size,image_url,created_at'
+  'id,name,barcode,sku,category,price,quantity,low_stock_threshold,is_available,track_inventory,size,created_at'
 
 const emptyProduct = {
   name: '',
@@ -20,7 +20,6 @@ const emptyProduct = {
   is_available: true,
   track_inventory: true,
   size: '',
-  image_url: '',
 }
 
 const SHOPPER_IDLE_TIMEOUT_MS = 20 * 60 * 1000
@@ -58,6 +57,43 @@ function Link({ href, children, className }) {
       {children}
     </a>
   )
+}
+
+function useRealtimeRefresh(channelName, tables, onRefresh, enabled = true) {
+  const refreshRef = useRef(onRefresh)
+  const tablesKey = tables.join('|')
+  const tableList = useMemo(() => tablesKey.split('|').filter(Boolean), [tablesKey])
+
+  useEffect(() => {
+    refreshRef.current = onRefresh
+  }, [onRefresh])
+
+  useEffect(() => {
+    if (!supabase || !enabled || !tableList.length) return undefined
+
+    let refreshTimer = null
+    const scheduleRefresh = () => {
+      if (refreshTimer) window.clearTimeout(refreshTimer)
+      refreshTimer = window.setTimeout(() => {
+        refreshRef.current?.()
+      }, 250)
+    }
+
+    const channel = supabase.channel(channelName)
+    for (const table of tableList) {
+      channel.on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table },
+        scheduleRefresh,
+      )
+    }
+    channel.subscribe()
+
+    return () => {
+      if (refreshTimer) window.clearTimeout(refreshTimer)
+      supabase.removeChannel(channel)
+    }
+  }, [channelName, enabled, tableList])
 }
 
 function StatusPill({ children, tone = 'neutral' }) {
@@ -139,24 +175,124 @@ function App() {
 
 function Landing() {
   return (
-    <main className="public-page narrow">
-      <p className="eyebrow">Glide pilot</p>
-      <h1>Self-checkout built for real stores.</h1>
-      <p className="lead">
-        Run one store, one QR code, real products, real payments and verified
-        exits without adding checkout complexity.
-      </p>
-      <div className="action-row">
+    <main className="landing-page">
+      <nav className="landing-nav" aria-label="Main navigation">
+        <Link className="brand" href="/">
+          Glide
+        </Link>
+        <div>
+          <Link href="/login">Login</Link>
+          <Link className="primary-action" href="/signup">
+            Start your store
+          </Link>
+        </div>
+      </nav>
+
+      <section className="landing-hero">
+        <div className="landing-hero-copy">
+          <p className="eyebrow">Retail checkout, simplified</p>
+          <h1>Self-checkout built for real stores.</h1>
+          <p className="lead">
+            Glide lets customers shop and pay from their phones while stores keep
+            inventory, payments, orders and receipt verification in one calm
+            operating system.
+          </p>
+          <div className="action-row">
+            <Link className="primary-action" href="/signup">
+              Start your store
+            </Link>
+            <Link className="secondary-action" href="/login">
+              Merchant login
+            </Link>
+          </div>
+        </div>
+        <div className="landing-preview" aria-hidden="true">
+          <div className="preview-phone">
+            <span>Greenway Mart</span>
+            <strong>₦8,450</strong>
+            <p>3 items scanned</p>
+            <div>
+              <i />
+              <b>Coca Cola 50cl</b>
+              <em>₦500</em>
+            </div>
+            <div>
+              <i />
+              <b>Golden Penny Pasta</b>
+              <em>₦1,250</em>
+            </div>
+            <button type="button">Checkout</button>
+          </div>
+          <div className="preview-ops">
+            <span>Inventory updated</span>
+            <span>Payment confirmed</span>
+            <span>Receipt ready for exit</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="landing-line">
+        Built for supermarkets, minimarts, pharmacies, campus stores and
+        neighbourhood retailers.
+      </section>
+
+      <section className="landing-split">
+        <div>
+          <p className="eyebrow">For shoppers</p>
+          <h2>Walk into any Glide powered store and shop easily.</h2>
+        </div>
+        <ol className="landing-steps">
+          <li>Scan the store QR.</li>
+          <li>Scan products as you shop.</li>
+          <li>Pay securely on your phone.</li>
+          <li>Show your digital receipt at the exit.</li>
+        </ol>
+      </section>
+
+      <section className="landing-split">
+        <div>
+          <p className="eyebrow">For stores</p>
+          <h2>A retail operating system for everyday selling.</h2>
+        </div>
+        <div className="landing-copy">
+          <p>
+            Glide is a retail operating system that lets customers shop and
+            check out from their phones while helping stores manage inventory,
+            payments and orders.
+          </p>
+          <p>
+            With Glide, store operations are unified and simplified: products,
+            stock, checkout QR codes, receipts, cashier activity and exit
+            verification all work from one place.
+          </p>
+        </div>
+      </section>
+
+      <section className="landing-statements" aria-label="What Glide improves">
+        <p>Queues move faster.</p>
+        <p>Inventory updates automatically.</p>
+        <p>Receipts stay digital.</p>
+        <p>Staff see paid orders instantly.</p>
+        <p>Security verifies exits in seconds.</p>
+      </section>
+
+      <section className="landing-close">
+        <h2>A better way for physical stores to sell.</h2>
         <Link className="primary-action" href="/signup">
-          Create store account
+          Start your store
         </Link>
-        <Link className="primary-action" href="/login">
-          Merchant login
-        </Link>
-        <Link className="secondary-action" href="/dash">
-          Open dashboard
-        </Link>
-      </div>
+      </section>
+
+      <footer className="landing-footer">
+        <span>© {new Date().getFullYear()} Glide</span>
+        <div>
+          <Link href="/dash">Product</Link>
+          <a href="/docs">Documentation</a>
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms</a>
+          <a href="mailto:hello@useglide.app">Contact</a>
+        </div>
+      </footer>
     </main>
   )
 }
@@ -530,8 +666,10 @@ function AppShell({ session, main }) {
 function Dashboard() {
   const [state, setState] = useState({ loading: true, error: '', data: null })
 
-  useEffect(() => {
-    callFunction('dashboard-summary')
+  const loadDashboard = useCallback((showLoading = false) => {
+    if (showLoading) setState((current) => ({ ...current, loading: true }))
+
+    return callFunction('dashboard-summary')
       .then((data) => setState({ loading: false, error: '', data }))
       .catch(() => {
         loadDashboardSummaryFromClient()
@@ -541,6 +679,16 @@ function Dashboard() {
           )
       })
   }, [])
+
+  useEffect(() => {
+    loadDashboard(true)
+  }, [loadDashboard])
+
+  useRealtimeRefresh(
+    'dashboard-live',
+    ['products', 'orders', 'order_items', 'payments', 'inventory_movements'],
+    () => loadDashboard(false),
+  )
 
   const data = {
     totalProducts: 0,
@@ -750,59 +898,29 @@ function smartNameFromText(text = '', barcode = '') {
   return cleaned[0]?.slice(0, 80) || ''
 }
 
-async function imageFileToDataUrl(file) {
-  if (!file) return ''
-
-  const image = document.createElement('img')
-  const source = URL.createObjectURL(file)
-  image.src = source
-  await new Promise((resolve, reject) => {
-    image.onload = resolve
-    image.onerror = reject
-  })
-
-  const scale = Math.min(1, 960 / Math.max(image.naturalWidth, image.naturalHeight))
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
-  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
-  const context = canvas.getContext('2d')
-  context.drawImage(image, 0, 0, canvas.width, canvas.height)
-  URL.revokeObjectURL(source)
-
-  return canvas.toDataURL('image/jpeg', 0.72)
-}
-
-async function extractTextFromImage(file) {
-  if (!file || !('TextDetector' in window) || !window.createImageBitmap) return ''
-
-  try {
-    const detector = new window.TextDetector()
-    const bitmap = await createImageBitmap(file)
-    const results = await detector.detect(bitmap)
-    bitmap.close?.()
-    return results.map((item) => item.rawValue).filter(Boolean).join('\n')
-  } catch {
-    return ''
-  }
-}
-
 function SmartAddDashboard() {
   const [state, setState] = useState({ loading: true, links: [], error: '', created: null })
   const [busy, setBusy] = useState(false)
 
-  async function loadLinks() {
-    setState((current) => ({ ...current, loading: true, error: '' }))
+  const loadLinks = useCallback(async (showLoading = true) => {
+    if (showLoading) setState((current) => ({ ...current, loading: true, error: '' }))
     try {
       const data = await callFunction('smart-add', { action: 'list-links' })
       setState({ loading: false, links: data.links || [], error: '', created: null })
     } catch (error) {
       setState({ loading: false, links: [], error: error.message, created: null })
     }
-  }
+  }, [])
 
   useEffect(() => {
-    loadLinks()
-  }, [])
+    loadLinks(true)
+  }, [loadLinks])
+
+  useRealtimeRefresh(
+    'smart-add-dashboard-live',
+    ['smart_add_links', 'smart_add_items', 'products'],
+    () => loadLinks(false),
+  )
 
   async function createLink() {
     setBusy(true)
@@ -831,7 +949,7 @@ function SmartAddDashboard() {
       <div className="dashboard-hero smart-add-hero">
         <PageTitle
           title="Smart Add"
-          subtitle="Create a secure mobile link for someone to scan product barcodes, capture product images and add stock into your store."
+          subtitle="Create a secure mobile link for someone to scan product barcodes and add product details into your store."
         />
         <button disabled={busy} type="button" onClick={createLink}>
           {busy ? 'Creating...' : 'Create mobile link'}
@@ -859,7 +977,7 @@ function SmartAddDashboard() {
             rows={[
               { label: '1. Create link', value: 'Send to any phone' },
               { label: '2. Scan barcode', value: 'Checks shared database' },
-              { label: '3. Capture product', value: 'Suggests name, size and category' },
+              { label: '3. Add details', value: 'Suggests size and category' },
               { label: '4. Save item', value: 'Adds to inventory' },
             ]}
           />
@@ -900,7 +1018,6 @@ function SmartAddPhone({ token }) {
     quantity: '1',
     low_stock_threshold: '5',
     labelText: '',
-    imageDataUrl: '',
   })
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
@@ -959,11 +1076,10 @@ function SmartAddPhone({ token }) {
           name: current.name || data.product.name || '',
           category: current.category || data.product.category || '',
           size: current.size || data.product.size || '',
-          imageDataUrl: current.imageDataUrl || data.product.image_url || '',
         }))
         setMessage('Product found in the shared database. Confirm stock details and save.')
       } else {
-        setMessage('New barcode. Capture the product image or enter details manually.')
+        setMessage('New barcode. Enter the product details and save.')
       }
     } catch (error) {
       setMessage(error.message)
@@ -1043,25 +1159,6 @@ function SmartAddPhone({ token }) {
     }
   }
 
-  async function handleImage(event) {
-    const file = event.target.files?.[0]
-    if (!file) return
-
-    setMessage('Reading product image...')
-    const [imageDataUrl, extractedText] = await Promise.all([
-      imageFileToDataUrl(file),
-      extractTextFromImage(file),
-    ])
-
-    setForm((current) => ({ ...current, imageDataUrl }))
-    if (extractedText) {
-      applySuggestions(extractedText)
-      setMessage('Image text detected. Review the suggested details before saving.')
-    } else {
-      setMessage('Image saved. Add the product name manually if your browser cannot read label text.')
-    }
-  }
-
   async function saveProduct(event) {
     event.preventDefault()
     setBusy(true)
@@ -1082,7 +1179,6 @@ function SmartAddPhone({ token }) {
             price: form.price,
             quantity: form.quantity,
             low_stock_threshold: form.low_stock_threshold,
-            image_url: form.imageDataUrl,
             label_text: form.labelText,
           },
         },
@@ -1100,7 +1196,6 @@ function SmartAddPhone({ token }) {
         quantity: '1',
         low_stock_threshold: '5',
         labelText: '',
-        imageDataUrl: '',
       })
     } catch (error) {
       setMessage(error.message)
@@ -1117,7 +1212,7 @@ function SmartAddPhone({ token }) {
       <section className="smart-phone-card">
         <p className="eyebrow">Smart Add</p>
         <h1>{state.link?.store_name || 'Glide store'}</h1>
-        <p className="lead">Scan barcode, capture the product, confirm details, save.</p>
+        <p className="lead">Scan barcode, enter the product details, save.</p>
 
         {message ? <Notice tone={message.includes('saved') || message.includes('found') ? 'success' : 'warning'}>{message}</Notice> : null}
 
@@ -1146,11 +1241,6 @@ function SmartAddPhone({ token }) {
               </button>
             </div>
           </label>
-          <label>
-            Product image
-            <input accept="image/*" capture="environment" type="file" onChange={handleImage} />
-          </label>
-          {form.imageDataUrl ? <img className="smart-product-photo" src={form.imageDataUrl} alt="Captured product" /> : null}
           <label>
             Label text or notes
             <textarea
@@ -1211,28 +1301,33 @@ function Products() {
   const [category, setCategory] = useState('all')
   const [editing, setEditing] = useState(null)
   const [formOpen, setFormOpen] = useState(false)
+  const [repositoryOpen, setRepositoryOpen] = useState(false)
   const [barcodeProduct, setBarcodeProduct] = useState(null)
   const [page, setPage] = useState(1)
 
-  async function loadProducts() {
-    setLoading(true)
+  const loadProducts = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true)
     const { data, error } = await supabase
       .from('products')
       .select(productColumns)
       .order('created_at', { ascending: false })
 
-    setLoading(false)
+    if (showLoading) setLoading(false)
     if (error) {
+      if (!showLoading) setLoading(false)
       setMessage(error.message)
       return
     }
 
     setProducts(data || [])
-  }
+    setLoading(false)
+  }, [])
 
   useEffect(() => {
-    loadProducts()
-  }, [])
+    loadProducts(true)
+  }, [loadProducts])
+
+  useRealtimeRefresh('products-live', ['products', 'inventory_movements'], () => loadProducts(false))
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get('action') === 'add') {
@@ -1269,6 +1364,19 @@ function Products() {
     setFormOpen(true)
   }
 
+  function openRepositoryProduct(product) {
+    setEditing({
+      ...emptyProduct,
+      global_product_id: product.id,
+      name: product.name || '',
+      barcode: product.barcode || '',
+      category: product.category || '',
+      size: product.size || '',
+    })
+    setRepositoryOpen(false)
+    setFormOpen(true)
+  }
+
   function openEditProduct(product) {
     setEditing(product)
     setFormOpen(true)
@@ -1299,6 +1407,9 @@ function Products() {
           <Link className="primary-action" href="/dash/smart-add">
             Smart Add
           </Link>
+          <button className="premium-action" type="button" onClick={() => setRepositoryOpen(true)}>
+            Product database
+          </button>
           <Link className="secondary-action" href="/dash/import">
             Import CSV
           </Link>
@@ -1325,6 +1436,12 @@ function Products() {
       ) : null}
       {barcodeProduct ? (
         <ProductBarcodeModal product={barcodeProduct} onClose={() => setBarcodeProduct(null)} />
+      ) : null}
+      {repositoryOpen ? (
+        <ProductRepositoryModal
+          onClose={() => setRepositoryOpen(false)}
+          onSelect={openRepositoryProduct}
+        />
       ) : null}
       <div className="inventory-toolbar">
         <div className="toolbar">
@@ -1371,11 +1488,6 @@ function Products() {
                 <tr key={product.id}>
                   <td>
                     <div className="product-cell">
-                      {product.image_url ? (
-                        <img src={product.image_url} alt="" />
-                      ) : (
-                        <span className="product-image-placeholder" />
-                      )}
                       <div>
                         <strong>{product.name}</strong>
                         <span>
@@ -1399,10 +1511,12 @@ function Products() {
                     <div className="stock-cell">
                       <strong>
                         {product.track_inventory
-                          ? `${product.quantity}/${product.low_stock_threshold} min`
+                          ? `${product.quantity} in stock`
                           : 'Not tracked'}
                       </strong>
-                      {product.track_inventory ? <span>{product.quantity} units</span> : null}
+                      {product.track_inventory ? (
+                        <span>Low stock alert at {product.low_stock_threshold}</span>
+                      ) : null}
                     </div>
                     {product.track_inventory &&
                     product.quantity <= product.low_stock_threshold ? (
@@ -1463,25 +1577,28 @@ function StaffManagement() {
   const [form, setForm] = useState({ fullName: '', email: '', password: '' })
   const [busy, setBusy] = useState(false)
 
-  async function loadStaff() {
-    setLoading(true)
+  const loadStaff = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true)
     const { data, error } = await supabase
       .from('staff_members')
       .select('*')
       .order('created_at', { ascending: false })
 
-    setLoading(false)
+    if (showLoading) setLoading(false)
     if (error) {
       setMessage(error.message)
       return
     }
 
     setStaff(data || [])
-  }
+    setLoading(false)
+  }, [])
 
   useEffect(() => {
-    loadStaff()
-  }, [])
+    loadStaff(true)
+  }, [loadStaff])
+
+  useRealtimeRefresh('staff-live', ['staff_members'], () => loadStaff(false))
 
   function update(field, value) {
     setForm((current) => ({ ...current, [field]: value }))
@@ -1599,6 +1716,89 @@ function StaffManagement() {
   )
 }
 
+function ProductRepositoryModal({ onClose, onSelect }) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState('Search by product name, barcode or category.')
+
+  async function searchRepository(event) {
+    event.preventDefault()
+    const term = query.trim().replace(/[%,]/g, ' ')
+
+    if (term.length < 2) {
+      setMessage('Enter at least 2 characters to search the product database.')
+      return
+    }
+
+    setLoading(true)
+    setMessage('')
+
+    const { data, error } = await supabase
+      .from('global_products')
+      .select('id,barcode,name,category,size,updated_at')
+      .or(`name.ilike.%${term}%,barcode.ilike.%${term}%,category.ilike.%${term}%`)
+      .order('updated_at', { ascending: false })
+      .limit(20)
+
+    setLoading(false)
+
+    if (error) {
+      setResults([])
+      setMessage('Product database is a premium feature. Run the Smart Add migration first, then enable repository access.')
+      return
+    }
+
+    setResults(data || [])
+    setMessage(data?.length ? '' : 'No products matched that search yet.')
+  }
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <section className="modal-panel repository-modal">
+        <div className="modal-title-row">
+          <div>
+            <p className="eyebrow">Premium preview</p>
+            <h2>Add from product database</h2>
+          </div>
+          <button type="button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <p className="repository-note">
+          Search the shared barcode repository, choose a product, then complete
+          price, stock and store-specific details before adding it.
+        </p>
+        <form className="toolbar repository-search" onSubmit={searchRepository}>
+          <input
+            autoFocus
+            placeholder="Search name, barcode or category"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <button disabled={loading} type="submit">
+            {loading ? 'Searching...' : 'Search'}
+          </button>
+        </form>
+        {message ? <Notice tone={message.includes('premium') ? 'warning' : 'neutral'}>{message}</Notice> : null}
+        {results.length ? (
+          <div className="repository-results">
+            {results.map((product) => (
+              <button key={product.id} type="button" onClick={() => onSelect(product)}>
+                <span>
+                  <strong>{product.name}</strong>
+                  <small>{[product.category || 'Uncategorised', product.size].filter(Boolean).join(' / ')}</small>
+                </span>
+                <em>{product.barcode}</em>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </section>
+    </div>
+  )
+}
+
 function ProductBarcodeModal({ product, onClose }) {
   const barcodeRef = useRef(null)
 
@@ -1637,9 +1837,6 @@ function ProductBarcodeModal({ product, onClose }) {
         <div className="barcode-preview">
           <svg ref={barcodeRef} aria-label={`${product.name} barcode`} />
         </div>
-        {product.image_url ? (
-          <img className="barcode-product-image" src={product.image_url} alt={product.name} />
-        ) : null}
         <SimpleList
           rows={[
             { label: 'Barcode', value: product.barcode },
@@ -1682,7 +1879,7 @@ function ProductForm({ product, onDone, onCancel }) {
       is_available: Boolean(form.is_available),
       track_inventory: Boolean(form.track_inventory),
       size: form.size?.trim() || null,
-      image_url: form.image_url?.trim() || null,
+      ...(form.global_product_id ? { global_product_id: form.global_product_id } : {}),
     }
 
     const duplicate = await supabase
@@ -1748,14 +1945,6 @@ function ProductForm({ product, onDone, onCancel }) {
             value={form.size || ''}
             onChange={(event) => update('size', event.target.value)}
             placeholder="500ml, 1kg, 12 pcs"
-          />
-        </label>
-        <label>
-          Image URL
-          <input
-            value={form.image_url || ''}
-            onChange={(event) => update('image_url', event.target.value)}
-            placeholder="Optional product image"
           />
         </label>
         <label>
@@ -1980,15 +2169,15 @@ function QrPage() {
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
 
-  async function loadQr() {
-    setLoading(true)
+  const loadQr = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true)
     const { data, error } = await supabase
       .from('qr_codes')
       .select('*')
       .eq('is_active', true)
       .maybeSingle()
 
-    setLoading(false)
+    if (showLoading) setLoading(false)
     if (error) {
       setMessage(error.message)
       return
@@ -1999,11 +2188,13 @@ function QrPage() {
       const url = `${window.location.origin}/s/${data.qr_code}`
       setImage(await QRCode.toDataURL(url, { margin: 1, width: 280 }))
     }
-  }
+  }, [])
 
   useEffect(() => {
-    loadQr()
-  }, [])
+    loadQr(true)
+  }, [loadQr])
+
+  useRealtimeRefresh('qr-live', ['qr_codes'], () => loadQr(false))
 
   async function regenerate() {
     const newCode = crypto.randomUUID().replaceAll('-', '').slice(0, 16)
@@ -2013,7 +2204,7 @@ function QrPage() {
       setMessage(error.message)
       return
     }
-    loadQr()
+    loadQr(false)
   }
 
   function printQr() {
@@ -3242,15 +3433,14 @@ function VerifyReceipt() {
   const [order, setOrder] = useState(null)
   const [message, setMessage] = useState('')
 
-  async function verify(event) {
-    event.preventDefault()
+  const verifyToken = useCallback(async (receiptToken) => {
     setMessage('')
     setOrder(null)
 
     const { data, error } = await supabase
       .from('orders')
       .select('*,order_items(*)')
-      .eq('receipt_token', token.trim())
+      .eq('receipt_token', receiptToken.trim())
       .maybeSingle()
 
     if (error || !data) {
@@ -3259,7 +3449,16 @@ function VerifyReceipt() {
     }
 
     setOrder(data)
+  }, [])
+
+  async function verify(event) {
+    event.preventDefault()
+    await verifyToken(token)
   }
+
+  useRealtimeRefresh('verify-receipt-live', ['orders'], () => {
+    if (token.trim()) verifyToken(token)
+  })
 
   async function markExited() {
     if (!order || order.status === 'exited') return
@@ -3317,17 +3516,21 @@ function Orders() {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    async function load() {
-      const { data } = await supabase
-        .from('orders')
-        .select('*')
-        .order('created_at', { ascending: false })
-      setOrders(data || [])
-      setLoading(false)
-    }
-    load()
+  const loadOrders = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true)
+    const { data } = await supabase
+      .from('orders')
+      .select('*')
+      .order('created_at', { ascending: false })
+    setOrders(data || [])
+    setLoading(false)
   }, [])
+
+  useEffect(() => {
+    loadOrders(true)
+  }, [loadOrders])
+
+  useRealtimeRefresh('orders-live', ['orders', 'payments'], () => loadOrders(false))
 
   return (
     <section className="dash-section">

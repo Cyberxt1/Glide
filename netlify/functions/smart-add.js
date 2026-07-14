@@ -143,7 +143,6 @@ export async function handler(event) {
       const category = cleanText(product.category, 100) || 'General'
       const size = cleanText(product.size, 80) || null
       const sku = cleanText(product.sku, 80) || null
-      const imageUrl = cleanText(product.image_url, 500000) || null
       const labelText = cleanText(product.label_text, 5000) || null
       const price = Number(product.price)
       const quantity = Number(product.quantity || 0)
@@ -165,7 +164,6 @@ export async function handler(event) {
             name,
             category,
             size,
-            image_url: imageUrl,
             label_text: labelText,
             updated_at: new Date().toISOString(),
           },
@@ -184,7 +182,6 @@ export async function handler(event) {
         category,
         size,
         sku,
-        image_url: imageUrl,
         price,
         quantity,
         low_stock_threshold: lowStockThreshold,
@@ -206,7 +203,6 @@ export async function handler(event) {
         product_id: productResult.data.id,
         global_product_id: globalResult.data.id,
         barcode,
-        captured_image_url: imageUrl,
         extracted_text: labelText,
         submitted_payload: product,
       })
