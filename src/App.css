@@ -2993,6 +2993,24 @@ td a {
   box-shadow: 0 20px 46px rgba(20, 35, 30, 0.16);
 }
 
+.category-custom-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(20, 35, 30, 0.08);
+}
+
+.category-custom-row input {
+  min-height: 36px;
+  border-radius: 8px;
+}
+
+.category-custom-row button {
+  min-height: 36px;
+  padding: 0 12px;
+}
+
 .category-menu button {
   min-height: 36px;
   justify-content: start;

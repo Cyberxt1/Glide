@@ -354,6 +354,7 @@ const emptyGlobalProduct = {
 }
 
 const productCategories = [
+  'Drinks',
   'Beverages',
   'Snacks',
   'Groceries',
@@ -1811,7 +1812,7 @@ async function loadDashboardSummaryFromClient() {
 function smartCategoryFromText(text = '') {
   const value = text.toLowerCase()
   const rules = [
-    ['Beverages', ['drink', 'juice', 'water', 'soda', 'cola', 'malt', 'milk', 'tea', 'coffee']],
+    ['Drinks', ['drink', 'juice', 'water', 'soda', 'cola', 'malt', 'milk', 'tea', 'coffee']],
     ['Snacks', ['biscuit', 'chips', 'cracker', 'sweet', 'chocolate', 'cookie', 'wafer']],
     ['Pharmacy', ['tablet', 'capsule', 'syrup', 'cream', 'mg', 'medicine', 'pain', 'vitamin']],
     ['Personal care', ['soap', 'shampoo', 'toothpaste', 'cream', 'lotion', 'deodorant']],
@@ -2237,6 +2238,16 @@ function SmartAddPhone({ token }) {
 }
 
 function CategoryPicker({ value, onChange, open, onOpenChange }) {
+  const [customValue, setCustomValue] = useState('')
+
+  function useCustomCategory() {
+    const nextValue = customValue.trim()
+    if (!nextValue) return
+    onChange(nextValue)
+    setCustomValue('')
+    onOpenChange(false)
+  }
+
   return (
     <label className="category-picker">
       Category
@@ -2246,6 +2257,22 @@ function CategoryPicker({ value, onChange, open, onOpenChange }) {
       </button>
       {open ? (
         <div className="category-menu">
+          <div className="category-custom-row">
+            <input
+              placeholder="Type custom category"
+              value={customValue}
+              onChange={(event) => setCustomValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  useCustomCategory()
+                }
+              }}
+            />
+            <button type="button" onClick={useCustomCategory}>
+              Use
+            </button>
+          </div>
           {productCategories.map((category) => (
             <button
               className={value === category ? 'active' : ''}
