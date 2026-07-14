@@ -2888,11 +2888,122 @@ td a {
 .metric,
 .panel,
 .product-form,
-.qr-panel {
+.qr-panel,
+.database-hero {
   border-color: rgba(20, 35, 30, 0.1);
   border-radius: 12px;
   background: rgba(251, 248, 239, 0.82);
   box-shadow: 0 16px 34px rgba(20, 35, 30, 0.06);
+}
+
+.database-hero {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 24px;
+}
+
+.database-hero div {
+  display: grid;
+  gap: 8px;
+}
+
+.database-hero h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(28px, 4vw, 44px);
+  line-height: 1.04;
+}
+
+.database-hero p:not(.eyebrow) {
+  max-width: 660px;
+  color: var(--muted);
+}
+
+.category-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.category-chip-list span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(20, 35, 30, 0.1);
+  border-radius: 999px;
+  color: var(--ink);
+  background: #fbf8ef;
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.category-chip-list b {
+  color: var(--green);
+}
+
+.clickable-row {
+  cursor: pointer;
+}
+
+.clickable-row:hover {
+  background: rgba(93, 125, 98, 0.08);
+}
+
+.category-picker {
+  position: relative;
+}
+
+.category-picker > button {
+  width: 100%;
+  justify-content: space-between;
+  border-color: var(--border-strong);
+  background: #fbf8ef;
+}
+
+.category-picker > button span {
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-picker > button b {
+  color: var(--green);
+  font-size: 12px;
+}
+
+.category-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  max-height: 260px;
+  overflow: auto;
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid rgba(20, 35, 30, 0.12);
+  border-radius: 12px;
+  background: #fbf8ef;
+  box-shadow: 0 20px 46px rgba(20, 35, 30, 0.16);
+}
+
+.category-menu button {
+  min-height: 36px;
+  justify-content: start;
+  border: 0;
+  background: transparent;
+}
+
+.category-menu button:hover,
+.category-menu button.active {
+  color: #fffaf0;
+  background: var(--green);
 }
 
 .metric {

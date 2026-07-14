@@ -162,6 +162,9 @@ function App() {
   const smartAddMatch = path.match(/^\/smart-add\/([^/]+)$/)
   if (smartAddMatch) return <SmartAddPhone token={smartAddMatch[1]} />
 
+  const productIntakeMatch = path.match(/^\/product-intake\/([^/]+)$/)
+  if (productIntakeMatch) return <ProductIntakePhone token={productIntakeMatch[1]} />
+
   const qrMatch = path.match(/^\/s\/([^/]+)$/)
   if (qrMatch) return <CustomerCheckout qrCode={qrMatch[1]} />
 
@@ -347,7 +350,26 @@ const emptyGlobalProduct = {
   category: '',
   size: '',
   label_text: '',
+  is_hidden: false,
 }
+
+const productCategories = [
+  'Beverages',
+  'Snacks',
+  'Groceries',
+  'Pharmacy',
+  'Personal care',
+  'Household',
+  'Fresh food',
+  'Frozen food',
+  'Bakery',
+  'Baby products',
+  'Beauty',
+  'Stationery',
+  'Electronics',
+  'Pet supplies',
+  'General',
+]
 
 function AdminGate({ session }) {
   const [state, setState] = useState({ loading: true, admin: null, error: '' })
@@ -408,12 +430,17 @@ function PlatformAdminDashboard({ admin, session }) {
   const [activeTab, setActiveTab] = useState('overview')
   const [summary, setSummary] = useState(null)
   const [products, setProducts] = useState([])
+  const [productStats, setProductStats] = useState({ total: 0, visible: 0, hidden: 0, categories: [] })
+  const [productLinks, setProductLinks] = useState([])
   const [merchants, setMerchants] = useState([])
   const [staff, setStaff] = useState([])
   const [orders, setOrders] = useState([])
   const [auditLogs, setAuditLogs] = useState([])
   const [query, setQuery] = useState('')
+  const [showHiddenProducts, setShowHiddenProducts] = useState(false)
   const [productForm, setProductForm] = useState(emptyGlobalProduct)
+  const [selectedProduct, setSelectedProduct] = useState(null)
+  const [categoryMenuOpen, setCategoryMenuOpen] = useState(false)
   const [merchantForm, setMerchantForm] = useState(null)
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(true)
@@ -425,12 +452,16 @@ function PlatformAdminDashboard({ admin, session }) {
     try {
       const [summaryResult, productResult, merchantResult] = await Promise.all([
         callFunction('platform-admin', { action: 'summary' }),
-        callFunction('platform-admin', { action: 'list-products', query }),
+        callFunction('platform-admin', {
+          action: 'list-products',
+          query: { term: query, hiddenOnly: showHiddenProducts },
+        }),
         callFunction('platform-admin', { action: 'list-merchants' }),
       ])
 
       setSummary(summaryResult.summary)
       setProducts(productResult.products || [])
+      setProductStats(productResult.productStats || { total: 0, visible: 0, hidden: 0, categories: [] })
       setMerchants(merchantResult.merchants || [])
       if (summaryResult.admin?.email && summaryResult.admin.email !== admin.email) {
         setMessage('Admin session refreshed.')
@@ -440,10 +471,11 @@ function PlatformAdminDashboard({ admin, session }) {
     } finally {
       setLoading(false)
     }
-  }, [query])
+  }, [admin.email, query, showHiddenProducts])
 
   useEffect(() => {
     loadAdmin()
+    loadProductLinks()
   }, [loadAdmin])
 
   useRealtimeRefresh(
@@ -551,6 +583,7 @@ function PlatformAdminDashboard({ admin, session }) {
   function changeTab(tab) {
     setActiveTab(tab)
     if (tab === 'overview' || tab === 'products' || tab === 'merchants') loadAdmin()
+    if (tab === 'products') loadProductLinks()
     if (tab === 'staff') loadStaff()
     if (tab === 'orders') loadOrders()
     if (tab === 'audit') loadAudit()
@@ -565,7 +598,9 @@ function PlatformAdminDashboard({ admin, session }) {
       category: product.category || '',
       size: product.size || '',
       label_text: product.label_text || '',
+      is_hidden: Boolean(product.is_hidden),
     })
+    setSelectedProduct(product)
   }
 
   function updateProductForm(field, value) {
@@ -589,6 +624,7 @@ function PlatformAdminDashboard({ admin, session }) {
           ? current.map((item) => (item.id === result.product.id ? result.product : item))
           : [result.product, ...current]
       })
+      setSelectedProduct(result.product)
       setMessage('Product database updated.')
     } catch (error) {
       setMessage(error.message)
@@ -598,13 +634,58 @@ function PlatformAdminDashboard({ admin, session }) {
   }
 
   async function deleteGlobalProduct(product) {
-    const confirmed = window.confirm(`Delete ${product.name} from the master product database?`)
+    const confirmed = window.confirm(`Permanently delete ${product.name} from the master product database? Hiding is safer for normal cleanup.`)
     if (!confirmed) return
 
     try {
       await callFunction('platform-admin', { action: 'delete-product', id: product.id })
       setProducts((current) => current.filter((item) => item.id !== product.id))
       setMessage('Product removed from database.')
+    } catch (error) {
+      setMessage(error.message)
+    }
+  }
+
+  async function createProductIntakeLink() {
+    setSaving(true)
+    setMessage('')
+    try {
+      const result = await callFunction('platform-admin', { action: 'create-product-intake-link' })
+      setProductLinks((current) => [result.link, ...current])
+      await navigator.clipboard?.writeText(result.link.url)
+      setMessage('Product scan link created and copied.')
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function loadProductLinks() {
+    try {
+      const result = await callFunction('platform-admin', { action: 'list-product-intake-links' })
+      setProductLinks(result.links || [])
+    } catch (error) {
+      setMessage(error.message)
+    }
+  }
+
+  async function setProductHidden(product, isHidden) {
+    try {
+      const result = await callFunction('platform-admin', {
+        action: 'set-product-hidden',
+        id: product.id,
+        isHidden,
+      })
+      setProducts((current) =>
+        showHiddenProducts
+          ? current.map((item) => (item.id === result.product.id ? result.product : item))
+          : current.filter((item) => item.id !== result.product.id),
+      )
+      setSelectedProduct(null)
+      setProductForm(emptyGlobalProduct)
+      await loadAdmin()
+      setMessage(`${result.product.name} ${result.product.is_hidden ? 'hidden' : 'restored'}.`)
     } catch (error) {
       setMessage(error.message)
     }
@@ -708,89 +789,166 @@ function PlatformAdminDashboard({ admin, session }) {
         ) : null}
 
         {activeTab === 'products' ? (
-          <section className="admin-grid">
-            <form className="product-form" onSubmit={saveGlobalProduct}>
-              <h2>{productForm.id ? 'Edit master product' : 'Add master product'}</h2>
-              <div className="form-grid">
-                <label>
-                  Barcode
-                  <input required value={productForm.barcode} onChange={(event) => updateProductForm('barcode', event.target.value)} />
-                </label>
-                <label>
-                  Product name
-                  <input required value={productForm.name} onChange={(event) => updateProductForm('name', event.target.value)} />
-                </label>
-                <label>
-                  Category
-                  <input value={productForm.category} onChange={(event) => updateProductForm('category', event.target.value)} />
-                </label>
-                <label>
-                  Size
-                  <input value={productForm.size} onChange={(event) => updateProductForm('size', event.target.value)} />
-                </label>
-                <label className="wide-field">
-                  Notes / label text
-                  <textarea value={productForm.label_text} onChange={(event) => updateProductForm('label_text', event.target.value)} />
-                </label>
+          <section className="dash-section">
+            <div className="database-hero">
+              <div>
+                <p className="eyebrow">Master product database</p>
+                <h2>Scan products into the large database.</h2>
+                <p>
+                  Generate a mobile scan link. Contributors scan barcodes, enter product details,
+                  and duplicates are blocked before save.
+                </p>
               </div>
-              <div className="action-row">
-                <button disabled={saving} type="submit">
-                  {saving ? 'Saving...' : 'Save master product'}
-                </button>
-                <button type="button" onClick={() => setProductForm(emptyGlobalProduct)}>
-                  Clear
-                </button>
-              </div>
-            </form>
+              <button disabled={saving} type="button" onClick={createProductIntakeLink}>
+                {saving ? 'Creating...' : 'Generate scan link'}
+              </button>
+            </div>
 
-            <section className="panel">
-              <div className="modal-title-row">
-                <h2>Master product database</h2>
-                <StatusPill tone="warning">Premium source</StatusPill>
-              </div>
-              <form className="toolbar" onSubmit={searchProducts}>
-                <input
-                  placeholder="Search name, barcode or category"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-                <button type="submit">Search</button>
-              </form>
-              {products.length ? (
-                <div className="table-wrap compact-table admin-products-table">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Product</th>
-                        <th>Barcode</th>
-                        <th>Category</th>
-                        <th>Size</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {products.map((product) => (
-                        <tr key={product.id}>
-                          <td>{product.name}</td>
-                          <td>{product.barcode}</td>
-                          <td>{product.category || 'General'}</td>
-                          <td>{product.size || 'Not set'}</td>
-                          <td>
-                            <button type="button" onClick={() => editProduct(product)}>
-                              Edit
-                            </button>
-                            <button type="button" onClick={() => deleteGlobalProduct(product)}>
-                              Delete
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+            <div className="metric-grid">
+              <Metric label="Total products" value={productStats.total || 0} />
+              <Metric label="Visible products" value={productStats.visible || 0} />
+              <Metric label="Hidden products" value={productStats.hidden || 0} />
+              <Metric label="Categories" value={productStats.categories?.length || 0} />
+            </div>
+
+            <TwoColumn>
+              <Panel title="Recent scan links">
+                {productLinks.length ? (
+                  <div className="smart-link-list">
+                    {productLinks.slice(0, 4).map((link) => (
+                      <div key={link.id}>
+                        <strong>{link.is_active ? 'Active scan link' : 'Expired scan link'}</strong>
+                        <span>{link.completed_count} products submitted</span>
+                        <button type="button" onClick={() => navigator.clipboard?.writeText(link.url)}>
+                          Copy
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState>No scan links yet.</EmptyState>
+                )}
+              </Panel>
+              <Panel title="Categories">
+                {productStats.categories?.length ? (
+                  <div className="category-chip-list">
+                    {productStats.categories.map((category) => (
+                      <span key={category.name}>
+                        {category.name} <b>{category.count}</b>
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState>No categories yet.</EmptyState>
+                )}
+              </Panel>
+            </TwoColumn>
+
+            <section className="admin-grid admin-store-grid">
+              <section className="panel">
+                <div className="modal-title-row">
+                  <h2>{showHiddenProducts ? 'Hidden products' : 'All visible products'}</h2>
+                  <button type="button" onClick={() => setShowHiddenProducts((current) => !current)}>
+                    {showHiddenProducts ? 'View visible' : 'View hidden'}
+                  </button>
                 </div>
-              ) : (
-                <EmptyState>No master products found.</EmptyState>
-              )}
+                <form className="toolbar" onSubmit={searchProducts}>
+                  <input
+                    placeholder="Search name, barcode or category"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                  />
+                  <button type="submit">Search</button>
+                </form>
+                {products.length ? (
+                  <div className="table-wrap compact-table admin-products-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Product</th>
+                          <th>Barcode</th>
+                          <th>Category</th>
+                          <th>Size</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {products.map((product) => (
+                          <tr
+                            className="clickable-row"
+                            key={product.id}
+                            onClick={() => editProduct(product)}
+                          >
+                            <td>{product.name}</td>
+                            <td className="sku-cell">{product.barcode}</td>
+                            <td>{product.category || 'General'}</td>
+                            <td>{product.size || 'Not set'}</td>
+                            <td>
+                              <StatusPill tone={product.is_hidden ? 'neutral' : 'success'}>
+                                {product.is_hidden ? 'Hidden' : 'Visible'}
+                              </StatusPill>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <EmptyState>No products found.</EmptyState>
+                )}
+              </section>
+
+              <form className="product-form" onSubmit={saveGlobalProduct}>
+                <h2>{selectedProduct ? 'Edit product' : 'Select a product'}</h2>
+                {selectedProduct ? (
+                  <>
+                    <label>
+                      Barcode
+                      <input readOnly value={productForm.barcode} />
+                    </label>
+                    <label>
+                      Product name
+                      <input
+                        required
+                        value={productForm.name}
+                        onChange={(event) => {
+                          updateProductForm('name', event.target.value)
+                          if (!productForm.category) {
+                            updateProductForm('category', smartCategoryFromText(event.target.value))
+                          }
+                        }}
+                      />
+                    </label>
+                    <CategoryPicker
+                      open={categoryMenuOpen}
+                      value={productForm.category}
+                      onOpenChange={setCategoryMenuOpen}
+                      onChange={(value) => updateProductForm('category', value)}
+                    />
+                    <label>
+                      Size
+                      <input value={productForm.size} onChange={(event) => updateProductForm('size', event.target.value)} />
+                    </label>
+                    <label>
+                      Notes / label text
+                      <textarea value={productForm.label_text} onChange={(event) => updateProductForm('label_text', event.target.value)} />
+                    </label>
+                    <div className="action-row">
+                      <button disabled={saving} type="submit">
+                        {saving ? 'Saving...' : 'Save changes'}
+                      </button>
+                      <button type="button" onClick={() => setProductHidden(selectedProduct, !selectedProduct.is_hidden)}>
+                        {selectedProduct.is_hidden ? 'Restore' : 'Hide'}
+                      </button>
+                      <button type="button" onClick={() => deleteGlobalProduct(selectedProduct)}>
+                        Delete
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <EmptyState>Click a product row to edit, hide, restore or delete it.</EmptyState>
+                )}
+              </form>
             </section>
           </section>
         ) : null}
@@ -2048,6 +2206,260 @@ function SmartAddPhone({ token }) {
           </div>
           <button disabled={busy} type="submit">
             {busy ? 'Saving...' : 'Save product'}
+          </button>
+        </form>
+      </section>
+    </main>
+  )
+}
+
+function CategoryPicker({ value, onChange, open, onOpenChange }) {
+  return (
+    <label className="category-picker">
+      Category
+      <button type="button" onClick={() => onOpenChange(!open)}>
+        <span>{value || 'Choose category'}</span>
+        <b>{open ? 'Close' : 'Open'}</b>
+      </button>
+      {open ? (
+        <div className="category-menu">
+          {productCategories.map((category) => (
+            <button
+              className={value === category ? 'active' : ''}
+              key={category}
+              type="button"
+              onClick={() => {
+                onChange(category)
+                onOpenChange(false)
+              }}
+            >
+              {category}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </label>
+  )
+}
+
+function ProductIntakePhone({ token }) {
+  const [state, setState] = useState({ loading: true, error: '', link: null })
+  const [barcode, setBarcode] = useState('')
+  const [form, setForm] = useState({ name: '', category: '', size: '', labelText: '' })
+  const [categoryOpen, setCategoryOpen] = useState(false)
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  const videoRef = useRef(null)
+  const scannerStopRef = useRef(null)
+
+  useEffect(() => {
+    async function loadLink() {
+      try {
+        const data = await callFunction('product-intake', { action: 'get-link', token }, false)
+        setState({ loading: false, error: '', link: data.link })
+      } catch (error) {
+        setState({ loading: false, error: error.message, link: null })
+      }
+    }
+
+    loadLink()
+    return () => scannerStopRef.current?.()
+  }, [token])
+
+  function update(field, value) {
+    setForm((current) => ({ ...current, [field]: value }))
+  }
+
+  function suggestFromText(text) {
+    update('labelText', text)
+    setForm((current) => ({
+      ...current,
+      labelText: text,
+      name: current.name || smartNameFromText(text, barcode),
+      size: current.size || smartSizeFromText(text),
+      category: current.category || smartCategoryFromText(text),
+    }))
+  }
+
+  async function checkBarcode(scannedBarcode) {
+    const cleanBarcode = String(scannedBarcode || '').trim()
+    if (!cleanBarcode) return
+
+    setBarcode(cleanBarcode)
+    setMessage('Checking barcode...')
+
+    try {
+      const result = await callFunction(
+        'product-intake',
+        { action: 'check-barcode', token, barcode: cleanBarcode },
+        false,
+      )
+
+      if (result.exists) {
+        setBarcode('')
+        setMessage(`Duplicate barcode. ${result.product?.name || 'This product'} already exists.`)
+        return
+      }
+
+      setMessage('New barcode scanned. Add product details.')
+    } catch (error) {
+      setMessage(error.message)
+    }
+  }
+
+  async function scanBarcode() {
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      setMessage('Camera scanning needs HTTPS or localhost.')
+      return
+    }
+
+    setMessage('Opening camera...')
+    scannerStopRef.current?.()
+
+    try {
+      const constraints = {
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      }
+
+      if ('BarcodeDetector' in window) {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints)
+        const detector = new window.BarcodeDetector({
+          formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf'],
+        })
+        const video = videoRef.current
+        video.srcObject = stream
+        await video.play()
+
+        let stopped = false
+        async function scanFrame() {
+          if (stopped) return
+          const detected = await detector.detect(video).catch(() => [])
+          const rawValue = detected?.[0]?.rawValue
+          if (rawValue) {
+            stopped = true
+            stream.getTracks().forEach((track) => track.stop())
+            video.srcObject = null
+            await checkBarcode(rawValue)
+            return
+          }
+          requestAnimationFrame(scanFrame)
+        }
+
+        scannerStopRef.current = () => {
+          stopped = true
+          stream.getTracks().forEach((track) => track.stop())
+          if (video) video.srcObject = null
+        }
+        scanFrame()
+        setMessage('Point at a barcode. Manual entry is disabled.')
+        return
+      }
+
+      const { BrowserMultiFormatReader } = await import('@zxing/browser')
+      const scanner = new BrowserMultiFormatReader()
+      const controls = await scanner.decodeFromConstraints(
+        constraints,
+        videoRef.current,
+        async (result) => {
+          const rawValue = result?.getText?.()
+          if (!rawValue) return
+          controls.stop()
+          scannerStopRef.current = null
+          await checkBarcode(rawValue)
+        },
+      )
+      scannerStopRef.current = () => controls.stop()
+      setMessage('Point at a barcode. Manual entry is disabled.')
+    } catch (error) {
+      setMessage(error.message || 'Camera could not scan.')
+    }
+  }
+
+  async function saveProduct(event) {
+    event.preventDefault()
+    setBusy(true)
+    setMessage('')
+
+    try {
+      const result = await callFunction(
+        'product-intake',
+        {
+          action: 'save-product',
+          token,
+          product: {
+            barcode,
+            name: form.name,
+            category: form.category,
+            size: form.size,
+            label_text: form.labelText,
+          },
+        },
+        false,
+      )
+
+      setMessage(`${result.product.name} saved to the product database.`)
+      setBarcode('')
+      setForm({ name: '', category: '', size: '', labelText: '' })
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (state.loading) return <main className="smart-add-mobile"><LoadingRows /></main>
+  if (state.error) return <main className="smart-add-mobile"><Notice tone="error">{state.error}</Notice></main>
+
+  return (
+    <main className="smart-add-mobile">
+      <section className="smart-phone-card">
+        <p className="eyebrow">Glide product database</p>
+        <h1>Scan product</h1>
+        <p className="lead">Scan a barcode, add product details, submit once.</p>
+        {message ? <Notice tone={message.includes('saved') || message.includes('New barcode') ? 'success' : 'warning'}>{message}</Notice> : null}
+
+        <div className="smart-scanner">
+          <video ref={videoRef} muted playsInline />
+          <button type="button" onClick={scanBarcode}>
+            Scan barcode
+          </button>
+        </div>
+
+        <form className="smart-product-form" onSubmit={saveProduct}>
+          <label>
+            Scanned barcode
+            <input readOnly required value={barcode} placeholder="Use camera scan" />
+          </label>
+          <label>
+            Label text or notes
+            <textarea
+              rows="3"
+              value={form.labelText}
+              onChange={(event) => suggestFromText(event.target.value)}
+              placeholder="Type product label text to suggest name, size and category"
+            />
+          </label>
+          <label>
+            Product name
+            <input required value={form.name} onChange={(event) => update('name', event.target.value)} />
+          </label>
+          <CategoryPicker
+            open={categoryOpen}
+            value={form.category}
+            onOpenChange={setCategoryOpen}
+            onChange={(value) => update('category', value)}
+          />
+          <label>
+            Size
+            <input value={form.size} onChange={(event) => update('size', event.target.value)} placeholder="500ml, 1kg" />
+          </label>
+          <button disabled={busy || !barcode} type="submit">
+            {busy ? 'Saving...' : 'Save to database'}
           </button>
         </form>
       </section>

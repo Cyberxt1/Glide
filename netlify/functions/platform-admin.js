@@ -1,4 +1,6 @@
-import { adminClient, json, requirePlatformAdmin } from './_supabase.js'
+import { adminClient, json, requirePlatformAdmin, token as makeToken } from './_supabase.js'
+
+const productIntakeLinkLifetimeMs = 7 * 24 * 60 * 60 * 1000
 
 function bad(message, status = 400) {
   return json(status, { error: message })
@@ -6,6 +8,20 @@ function bad(message, status = 400) {
 
 function cleanText(value, limit = 200) {
   return String(value || '').trim().slice(0, limit)
+}
+
+function getSiteUrl(event) {
+  const configured = process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL
+  if (configured) return configured.startsWith('http') ? configured : `https://${configured}`
+
+  const host = event.headers.host || event.headers.Host
+  if (!host) return ''
+
+  const protocol =
+    host.includes('localhost') || host.startsWith('127.') || host.startsWith('[::1]')
+      ? 'http'
+      : 'https'
+  return `${protocol}://${host}`
 }
 
 async function tableCount(supabase, table, query = (request) => request) {
@@ -44,6 +60,7 @@ async function summary(supabase) {
     smartAddCount,
     staffCount,
     activeStaffCount,
+    hiddenGlobalProductCount,
     recentMerchants,
     recentGlobalProducts,
     recentAudit,
@@ -57,6 +74,7 @@ async function summary(supabase) {
     tableCount(supabase, 'smart_add_items'),
     tableCount(supabase, 'staff_members'),
     tableCount(supabase, 'staff_members', (request) => request.eq('is_active', true)),
+    tableCount(supabase, 'global_products', (request) => request.eq('is_hidden', true)),
     supabase
       .from('merchant_profile')
       .select('id,store_name,branch_name,created_at')
@@ -89,6 +107,7 @@ async function summary(supabase) {
     smartAddCount,
     staffCount,
     activeStaffCount,
+    hiddenGlobalProductCount,
     totalRevenue: (paidOrders.data || []).reduce(
       (sum, order) => sum + Number(order.total_amount || 0),
       0,
@@ -133,12 +152,20 @@ async function listMerchants(supabase) {
 }
 
 async function listProducts(supabase, query) {
-  const term = cleanText(query, 120).replace(/[%,]/g, ' ')
+  const term = cleanText(query?.term ?? query, 120).replace(/[%,]/g, ' ')
+  const includeHidden = Boolean(query?.includeHidden)
+  const hiddenOnly = Boolean(query?.hiddenOnly)
   let request = supabase
     .from('global_products')
-    .select('id,barcode,name,category,size,label_text,created_at,updated_at')
+    .select('id,barcode,name,category,size,label_text,is_hidden,created_at,updated_at')
     .order('updated_at', { ascending: false })
     .limit(80)
+
+  if (hiddenOnly) {
+    request = request.eq('is_hidden', true)
+  } else if (!includeHidden) {
+    request = request.eq('is_hidden', false)
+  }
 
   if (term) {
     request = request.or(`name.ilike.%${term}%,barcode.ilike.%${term}%,category.ilike.%${term}%`)
@@ -146,7 +173,9 @@ async function listProducts(supabase, query) {
 
   const result = await request
   if (result.error) throw result.error
-  return result.data || []
+  const rows = result.data || []
+  const stats = await productStats(supabase)
+  return { rows, stats }
 }
 
 async function saveProduct(supabase, product) {
@@ -159,6 +188,7 @@ async function saveProduct(supabase, product) {
 
   if (!barcode) throw new Error('Barcode is required.')
   if (!name) throw new Error('Product name is required.')
+  if (!id) throw new Error('Use a product scan link to add new database products.')
 
   const payload = {
     barcode,
@@ -166,16 +196,100 @@ async function saveProduct(supabase, product) {
     category,
     size,
     label_text: labelText,
+    is_hidden: Boolean(product.is_hidden),
     updated_at: new Date().toISOString(),
   }
 
-  const request = id
-    ? supabase.from('global_products').update(payload).eq('id', id)
-    : supabase.from('global_products').insert(payload)
+  const request = supabase.from('global_products').update(payload).eq('id', id)
 
   const result = await request.select('*').single()
   if (result.error) throw result.error
   return result.data
+}
+
+async function setProductHidden(supabase, id, isHidden) {
+  const productId = cleanText(id, 80)
+  if (!productId) throw new Error('Product id is required.')
+
+  const result = await supabase
+    .from('global_products')
+    .update({ is_hidden: Boolean(isHidden), updated_at: new Date().toISOString() })
+    .eq('id', productId)
+    .select('*')
+    .single()
+
+  if (result.error) throw result.error
+  return result.data
+}
+
+async function productStats(supabase) {
+  const result = await supabase
+    .from('global_products')
+    .select('category,is_hidden')
+
+  if (result.error) throw result.error
+
+  const rows = result.data || []
+  const categories = new Map()
+  for (const product of rows.filter((row) => !row.is_hidden)) {
+    const category = product.category || 'General'
+    categories.set(category, (categories.get(category) || 0) + 1)
+  }
+
+  return {
+    total: rows.length,
+    visible: rows.filter((row) => !row.is_hidden).length,
+    hidden: rows.filter((row) => row.is_hidden).length,
+    categories: [...categories.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  }
+}
+
+async function createProductIntakeLink(supabase, event, user) {
+  const linkToken = makeToken(16)
+  const expiresAt = new Date(Date.now() + productIntakeLinkLifetimeMs).toISOString()
+  const siteUrl = getSiteUrl(event)
+
+  const result = await supabase
+    .from('platform_product_intake_links')
+    .insert({
+      token: linkToken,
+      created_by_email: user.email,
+      expires_at: expiresAt,
+    })
+    .select('id,token,is_active,expires_at,created_at')
+    .single()
+
+  if (result.error) throw result.error
+
+  return {
+    ...result.data,
+    completed_count: 0,
+    url: `${siteUrl}/product-intake/${linkToken}`,
+  }
+}
+
+async function listProductIntakeLinks(supabase, event) {
+  const siteUrl = getSiteUrl(event)
+  const result = await supabase
+    .from('platform_product_intake_links')
+    .select('id,token,is_active,expires_at,created_at,created_by_email,platform_product_intake_items(id)')
+    .order('created_at', { ascending: false })
+    .limit(20)
+
+  if (result.error) throw result.error
+
+  return (result.data || []).map((link) => ({
+    id: link.id,
+    token: link.token,
+    is_active: link.is_active && new Date(link.expires_at).getTime() > Date.now(),
+    expires_at: link.expires_at,
+    created_at: link.created_at,
+    created_by_email: link.created_by_email,
+    completed_count: link.platform_product_intake_items?.length || 0,
+    url: `${siteUrl}/product-intake/${link.token}`,
+  }))
 }
 
 async function updateMerchant(supabase, merchant) {
@@ -271,7 +385,18 @@ export async function handler(event) {
     }
 
     if (body.action === 'list-products') {
-      return json(200, { products: await listProducts(supabase, body.query) })
+      const products = await listProducts(supabase, body.query)
+      return json(200, { products: products.rows, productStats: products.stats })
+    }
+
+    if (body.action === 'create-product-intake-link') {
+      const link = await createProductIntakeLink(supabase, event, user)
+      await audit(supabase, user, 'product_intake_link_created', { link_id: link.id })
+      return json(200, { link })
+    }
+
+    if (body.action === 'list-product-intake-links') {
+      return json(200, { links: await listProductIntakeLinks(supabase, event) })
     }
 
     if (body.action === 'list-staff') {
@@ -306,7 +431,16 @@ export async function handler(event) {
 
     if (body.action === 'save-product') {
       const product = await saveProduct(supabase, body.product || {})
-      await audit(supabase, user, body.product?.id ? 'global_product_updated' : 'global_product_created', {
+      await audit(supabase, user, 'global_product_updated', {
+        product_id: product.id,
+        barcode: product.barcode,
+      })
+      return json(200, { product })
+    }
+
+    if (body.action === 'set-product-hidden') {
+      const product = await setProductHidden(supabase, body.id, body.isHidden)
+      await audit(supabase, user, product.is_hidden ? 'global_product_hidden' : 'global_product_restored', {
         product_id: product.id,
         barcode: product.barcode,
       })
