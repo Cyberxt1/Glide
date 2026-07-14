@@ -31,15 +31,17 @@ async function tableCount(supabase, table, query = (request) => request) {
 }
 
 async function audit(supabase, user, action, details = {}) {
-  await supabase
-    .from('platform_admin_audit_logs')
-    .insert({
-      admin_email: user.email,
-      action,
-      details,
-    })
-    .throwOnError()
-    .catch(() => {})
+  try {
+    await supabase
+      .from('platform_admin_audit_logs')
+      .insert({
+        admin_email: user.email,
+        action,
+        details,
+      })
+  } catch {
+    // Audit writes should never block the admin action itself.
+  }
 }
 
 async function adminProfile(user) {

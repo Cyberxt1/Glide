@@ -584,13 +584,20 @@ function PlatformAdminDashboard({ admin, session }) {
     setActiveTab(tab)
     if (tab === 'overview' || tab === 'products' || tab === 'merchants') loadAdmin()
     if (tab === 'products') loadProductLinks()
+    if (tab === 'visible-products') {
+      setShowHiddenProducts(false)
+      if (showHiddenProducts === false) loadAdmin()
+    }
+    if (tab === 'hidden-products') {
+      setShowHiddenProducts(true)
+      if (showHiddenProducts === true) loadAdmin()
+    }
     if (tab === 'staff') loadStaff()
     if (tab === 'orders') loadOrders()
     if (tab === 'audit') loadAudit()
   }
 
   function editProduct(product) {
-    setActiveTab('products')
     setProductForm({
       id: product.id || '',
       barcode: product.barcode || '',
@@ -617,7 +624,15 @@ function PlatformAdminDashboard({ admin, session }) {
         action: 'save-product',
         product: productForm,
       })
-      setProductForm(emptyGlobalProduct)
+      setProductForm({
+        id: result.product.id || '',
+        barcode: result.product.barcode || '',
+        name: result.product.name || '',
+        category: result.product.category || '',
+        size: result.product.size || '',
+        label_text: result.product.label_text || '',
+        is_hidden: Boolean(result.product.is_hidden),
+      })
       setProducts((current) => {
         const exists = current.some((item) => item.id === result.product.id)
         return exists
@@ -709,6 +724,12 @@ function PlatformAdminDashboard({ admin, session }) {
           </button>
           <button className={activeTab === 'products' ? 'active' : ''} type="button" onClick={() => changeTab('products')}>
             Product database
+          </button>
+          <button className={activeTab === 'visible-products' ? 'active' : ''} type="button" onClick={() => changeTab('visible-products')}>
+            Visible products
+          </button>
+          <button className={activeTab === 'hidden-products' ? 'active' : ''} type="button" onClick={() => changeTab('hidden-products')}>
+            Hidden products
           </button>
           <button className={activeTab === 'merchants' ? 'active' : ''} type="button" onClick={() => changeTab('merchants')}>
             Stores
@@ -843,113 +864,115 @@ function PlatformAdminDashboard({ admin, session }) {
                 )}
               </Panel>
             </TwoColumn>
+          </section>
+        ) : null}
 
-            <section className="admin-grid admin-store-grid">
-              <section className="panel">
-                <div className="modal-title-row">
-                  <h2>{showHiddenProducts ? 'Hidden products' : 'All visible products'}</h2>
-                  <button type="button" onClick={() => setShowHiddenProducts((current) => !current)}>
-                    {showHiddenProducts ? 'View visible' : 'View hidden'}
-                  </button>
-                </div>
-                <form className="toolbar" onSubmit={searchProducts}>
-                  <input
-                    placeholder="Search name, barcode or category"
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                  />
-                  <button type="submit">Search</button>
-                </form>
-                {products.length ? (
-                  <div className="table-wrap compact-table admin-products-table">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Product</th>
-                          <th>Barcode</th>
-                          <th>Category</th>
-                          <th>Size</th>
-                          <th>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {products.map((product) => (
-                          <tr
-                            className="clickable-row"
-                            key={product.id}
-                            onClick={() => editProduct(product)}
-                          >
-                            <td>{product.name}</td>
-                            <td className="sku-cell">{product.barcode}</td>
-                            <td>{product.category || 'General'}</td>
-                            <td>{product.size || 'Not set'}</td>
-                            <td>
-                              <StatusPill tone={product.is_hidden ? 'neutral' : 'success'}>
-                                {product.is_hidden ? 'Hidden' : 'Visible'}
-                              </StatusPill>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <EmptyState>No products found.</EmptyState>
-                )}
-              </section>
-
-              <form className="product-form" onSubmit={saveGlobalProduct}>
-                <h2>{selectedProduct ? 'Edit product' : 'Select a product'}</h2>
-                {selectedProduct ? (
-                  <>
-                    <label>
-                      Barcode
-                      <input readOnly value={productForm.barcode} />
-                    </label>
-                    <label>
-                      Product name
-                      <input
-                        required
-                        value={productForm.name}
-                        onChange={(event) => {
-                          updateProductForm('name', event.target.value)
-                          if (!productForm.category) {
-                            updateProductForm('category', smartCategoryFromText(event.target.value))
-                          }
-                        }}
-                      />
-                    </label>
-                    <CategoryPicker
-                      open={categoryMenuOpen}
-                      value={productForm.category}
-                      onOpenChange={setCategoryMenuOpen}
-                      onChange={(value) => updateProductForm('category', value)}
-                    />
-                    <label>
-                      Size
-                      <input value={productForm.size} onChange={(event) => updateProductForm('size', event.target.value)} />
-                    </label>
-                    <label>
-                      Notes / label text
-                      <textarea value={productForm.label_text} onChange={(event) => updateProductForm('label_text', event.target.value)} />
-                    </label>
-                    <div className="action-row">
-                      <button disabled={saving} type="submit">
-                        {saving ? 'Saving...' : 'Save changes'}
-                      </button>
-                      <button type="button" onClick={() => setProductHidden(selectedProduct, !selectedProduct.is_hidden)}>
-                        {selectedProduct.is_hidden ? 'Restore' : 'Hide'}
-                      </button>
-                      <button type="button" onClick={() => deleteGlobalProduct(selectedProduct)}>
-                        Delete
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <EmptyState>Click a product row to edit, hide, restore or delete it.</EmptyState>
-                )}
+        {activeTab === 'visible-products' || activeTab === 'hidden-products' ? (
+          <section className="admin-grid admin-store-grid">
+            <section className="panel">
+              <div className="modal-title-row">
+                <h2>{activeTab === 'hidden-products' ? 'Hidden products' : 'Visible products'}</h2>
+                <StatusPill tone={activeTab === 'hidden-products' ? 'neutral' : 'success'}>
+                  {products.length} shown
+                </StatusPill>
+              </div>
+              <form className="toolbar" onSubmit={searchProducts}>
+                <input
+                  placeholder="Search name, barcode or category"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+                <button type="submit">Search</button>
               </form>
+              {products.length ? (
+                <div className="table-wrap compact-table admin-products-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Product</th>
+                        <th>Barcode</th>
+                        <th>Category</th>
+                        <th>Size</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {products.map((product) => (
+                        <tr
+                          className="clickable-row"
+                          key={product.id}
+                          onClick={() => editProduct(product)}
+                        >
+                          <td>{product.name}</td>
+                          <td className="sku-cell">{product.barcode}</td>
+                          <td>{product.category || 'General'}</td>
+                          <td>{product.size || 'Not set'}</td>
+                          <td>
+                            <StatusPill tone={product.is_hidden ? 'neutral' : 'success'}>
+                              {product.is_hidden ? 'Hidden' : 'Visible'}
+                            </StatusPill>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <EmptyState>No products found.</EmptyState>
+              )}
             </section>
+
+            <form className="product-form" onSubmit={saveGlobalProduct}>
+              <h2>{selectedProduct ? 'Edit product' : 'Select a product'}</h2>
+              {selectedProduct ? (
+                <>
+                  <label>
+                    Barcode
+                    <input readOnly value={productForm.barcode} />
+                  </label>
+                  <label>
+                    Product name
+                    <input
+                      required
+                      value={productForm.name}
+                      onChange={(event) => {
+                        updateProductForm('name', event.target.value)
+                        if (!productForm.category) {
+                          updateProductForm('category', smartCategoryFromText(event.target.value))
+                        }
+                      }}
+                    />
+                  </label>
+                  <CategoryPicker
+                    open={categoryMenuOpen}
+                    value={productForm.category}
+                    onOpenChange={setCategoryMenuOpen}
+                    onChange={(value) => updateProductForm('category', value)}
+                  />
+                  <label>
+                    Size
+                    <input value={productForm.size} onChange={(event) => updateProductForm('size', event.target.value)} />
+                  </label>
+                  <label>
+                    Notes / label text
+                    <textarea value={productForm.label_text} onChange={(event) => updateProductForm('label_text', event.target.value)} />
+                  </label>
+                  <div className="action-row">
+                    <button disabled={saving} type="submit">
+                      {saving ? 'Saving...' : 'Save changes'}
+                    </button>
+                    <button type="button" onClick={() => setProductHidden(selectedProduct, !selectedProduct.is_hidden)}>
+                      {selectedProduct.is_hidden ? 'Restore' : 'Hide'}
+                    </button>
+                    <button type="button" onClick={() => deleteGlobalProduct(selectedProduct)}>
+                      Delete
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <EmptyState>Click a product row to edit, hide, restore or delete it.</EmptyState>
+              )}
+            </form>
           </section>
         ) : null}
 
