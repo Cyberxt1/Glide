@@ -57,6 +57,31 @@ export async function requireMerchant(event, supabase) {
   return profile.data
 }
 
+export async function requirePlatformAdmin(event, supabase) {
+  const auth = event.headers.authorization || event.headers.Authorization
+  const jwt = auth?.replace('Bearer ', '')
+
+  if (!jwt) throw new Error('Login required.')
+
+  const { data, error } = await supabase.auth.getUser(jwt)
+  if (error || !data.user) throw new Error('Login required.')
+
+  const allowedEmails = String(process.env.GLIDE_ADMIN_EMAILS || '')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean)
+
+  const userEmail = String(data.user.email || '').toLowerCase()
+  const metadataRole =
+    data.user.app_metadata?.role || data.user.user_metadata?.role || data.user.app_metadata?.glide_role
+
+  if (!allowedEmails.includes(userEmail) && metadataRole !== 'platform_admin') {
+    throw new Error('Platform admin access required.')
+  }
+
+  return data.user
+}
+
 export async function requireMerchantOrStaff(event, supabase) {
   const auth = event.headers.authorization || event.headers.Authorization
   const jwt = auth?.replace('Bearer ', '')

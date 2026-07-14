@@ -146,6 +146,12 @@ function App() {
     return <StoreSetup session={session} />
   }
 
+  if (path.startsWith('/admin')) {
+    if (!sessionLoaded) return <main className="auth-page"><LoadingRows /></main>
+    if (!session) return <Login />
+    return <PlatformAdminDashboard session={session} />
+  }
+
   if (path === '/cashier') {
     if (!sessionLoaded) return <main className="auth-page"><LoadingRows /></main>
     if (!session) return <Login />
@@ -320,6 +326,318 @@ async function getUserHomePath() {
   if (staff.data?.role === 'cashier') return '/cashier'
 
   return '/setup-store'
+}
+
+const emptyGlobalProduct = {
+  id: '',
+  barcode: '',
+  name: '',
+  category: '',
+  size: '',
+  label_text: '',
+}
+
+function PlatformAdminDashboard({ session }) {
+  const [activeTab, setActiveTab] = useState('overview')
+  const [summary, setSummary] = useState(null)
+  const [products, setProducts] = useState([])
+  const [merchants, setMerchants] = useState([])
+  const [query, setQuery] = useState('')
+  const [productForm, setProductForm] = useState(emptyGlobalProduct)
+  const [message, setMessage] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  const loadAdmin = useCallback(async () => {
+    setLoading(true)
+    setMessage('')
+    try {
+      const [summaryResult, productResult, merchantResult] = await Promise.all([
+        callFunction('platform-admin', { action: 'summary' }),
+        callFunction('platform-admin', { action: 'list-products', query }),
+        callFunction('platform-admin', { action: 'list-merchants' }),
+      ])
+
+      setSummary(summaryResult.summary)
+      setProducts(productResult.products || [])
+      setMerchants(merchantResult.merchants || [])
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [query])
+
+  useEffect(() => {
+    loadAdmin()
+  }, [loadAdmin])
+
+  useRealtimeRefresh(
+    'platform-admin-live',
+    ['global_products', 'merchant_profile', 'products', 'orders', 'smart_add_items'],
+    loadAdmin,
+  )
+
+  async function searchProducts(event) {
+    event.preventDefault()
+    await loadAdmin()
+  }
+
+  function editProduct(product) {
+    setActiveTab('products')
+    setProductForm({
+      id: product.id || '',
+      barcode: product.barcode || '',
+      name: product.name || '',
+      category: product.category || '',
+      size: product.size || '',
+      label_text: product.label_text || '',
+    })
+  }
+
+  function updateProductForm(field, value) {
+    setProductForm((current) => ({ ...current, [field]: value }))
+  }
+
+  async function saveGlobalProduct(event) {
+    event.preventDefault()
+    setSaving(true)
+    setMessage('')
+
+    try {
+      const result = await callFunction('platform-admin', {
+        action: 'save-product',
+        product: productForm,
+      })
+      setProductForm(emptyGlobalProduct)
+      setProducts((current) => {
+        const exists = current.some((item) => item.id === result.product.id)
+        return exists
+          ? current.map((item) => (item.id === result.product.id ? result.product : item))
+          : [result.product, ...current]
+      })
+      setMessage('Product database updated.')
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function deleteGlobalProduct(product) {
+    const confirmed = window.confirm(`Delete ${product.name} from the master product database?`)
+    if (!confirmed) return
+
+    try {
+      await callFunction('platform-admin', { action: 'delete-product', id: product.id })
+      setProducts((current) => current.filter((item) => item.id !== product.id))
+      setMessage('Product removed from database.')
+    } catch (error) {
+      setMessage(error.message)
+    }
+  }
+
+  async function logout() {
+    await supabase.auth.signOut()
+    navigate('/login')
+  }
+
+  return (
+    <main className="admin-console">
+      <aside className="admin-sidebar">
+        <Link className="brand" href="/admin">
+          Glide Admin
+        </Link>
+        <span>{session.user.email}</span>
+        <nav>
+          <button className={activeTab === 'overview' ? 'active' : ''} type="button" onClick={() => setActiveTab('overview')}>
+            Overview
+          </button>
+          <button className={activeTab === 'products' ? 'active' : ''} type="button" onClick={() => setActiveTab('products')}>
+            Product database
+          </button>
+          <button className={activeTab === 'merchants' ? 'active' : ''} type="button" onClick={() => setActiveTab('merchants')}>
+            Stores
+          </button>
+        </nav>
+        <button type="button" onClick={logout}>
+          Sign out
+        </button>
+      </aside>
+
+      <section className="admin-main">
+        <PageTitle
+          title="Master control"
+          subtitle="Platform-level view for Glide stores, shared product data and operating health."
+        />
+        {message ? <Notice tone={message.includes('updated') || message.includes('removed') ? 'success' : 'warning'}>{message}</Notice> : null}
+        {loading && !summary ? <LoadingRows /> : null}
+
+        {activeTab === 'overview' ? (
+          <>
+            <div className="metric-grid">
+              <Metric label="Stores" value={summary?.merchantCount || 0} />
+              <Metric label="Store products" value={summary?.productCount || 0} />
+              <Metric label="Master products" value={summary?.globalProductCount || 0} />
+              <Metric label="Orders" value={summary?.orderCount || 0} />
+              <Metric label="Paid orders" value={summary?.paidOrderCount || 0} />
+              <Metric label="Revenue tracked" value={formatMoney(summary?.totalRevenue || 0)} />
+            </div>
+            <TwoColumn>
+              <Panel title="Recent stores">
+                {summary?.recentMerchants?.length ? (
+                  <SimpleList
+                    rows={summary.recentMerchants.map((merchant) => ({
+                      label: merchant.store_name,
+                      value: formatDateTime(merchant.created_at),
+                    }))}
+                  />
+                ) : (
+                  <EmptyState>No stores yet.</EmptyState>
+                )}
+              </Panel>
+              <Panel title="Recent master products">
+                {summary?.recentGlobalProducts?.length ? (
+                  <SimpleList
+                    rows={summary.recentGlobalProducts.map((product) => ({
+                      label: product.name,
+                      value: product.barcode,
+                    }))}
+                  />
+                ) : (
+                  <EmptyState>No master products yet.</EmptyState>
+                )}
+              </Panel>
+            </TwoColumn>
+          </>
+        ) : null}
+
+        {activeTab === 'products' ? (
+          <section className="admin-grid">
+            <form className="product-form" onSubmit={saveGlobalProduct}>
+              <h2>{productForm.id ? 'Edit master product' : 'Add master product'}</h2>
+              <div className="form-grid">
+                <label>
+                  Barcode
+                  <input required value={productForm.barcode} onChange={(event) => updateProductForm('barcode', event.target.value)} />
+                </label>
+                <label>
+                  Product name
+                  <input required value={productForm.name} onChange={(event) => updateProductForm('name', event.target.value)} />
+                </label>
+                <label>
+                  Category
+                  <input value={productForm.category} onChange={(event) => updateProductForm('category', event.target.value)} />
+                </label>
+                <label>
+                  Size
+                  <input value={productForm.size} onChange={(event) => updateProductForm('size', event.target.value)} />
+                </label>
+                <label className="wide-field">
+                  Notes / label text
+                  <textarea value={productForm.label_text} onChange={(event) => updateProductForm('label_text', event.target.value)} />
+                </label>
+              </div>
+              <div className="action-row">
+                <button disabled={saving} type="submit">
+                  {saving ? 'Saving...' : 'Save master product'}
+                </button>
+                <button type="button" onClick={() => setProductForm(emptyGlobalProduct)}>
+                  Clear
+                </button>
+              </div>
+            </form>
+
+            <section className="panel">
+              <div className="modal-title-row">
+                <h2>Master product database</h2>
+                <StatusPill tone="warning">Premium source</StatusPill>
+              </div>
+              <form className="toolbar" onSubmit={searchProducts}>
+                <input
+                  placeholder="Search name, barcode or category"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+                <button type="submit">Search</button>
+              </form>
+              {products.length ? (
+                <div className="table-wrap compact-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Product</th>
+                        <th>Barcode</th>
+                        <th>Category</th>
+                        <th>Size</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {products.map((product) => (
+                        <tr key={product.id}>
+                          <td>{product.name}</td>
+                          <td>{product.barcode}</td>
+                          <td>{product.category || 'General'}</td>
+                          <td>{product.size || 'Not set'}</td>
+                          <td>
+                            <button type="button" onClick={() => editProduct(product)}>
+                              Edit
+                            </button>
+                            <button type="button" onClick={() => deleteGlobalProduct(product)}>
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <EmptyState>No master products found.</EmptyState>
+              )}
+            </section>
+          </section>
+        ) : null}
+
+        {activeTab === 'merchants' ? (
+          <section className="panel">
+            <h2>Stores on Glide</h2>
+            {merchants.length ? (
+              <div className="table-wrap compact-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Store</th>
+                      <th>Branch</th>
+                      <th>Products</th>
+                      <th>Orders</th>
+                      <th>Paid revenue</th>
+                      <th>Created</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {merchants.map((merchant) => (
+                      <tr key={merchant.id}>
+                        <td>{merchant.store_name}</td>
+                        <td>{merchant.branch_name}</td>
+                        <td>{merchant.products_count}</td>
+                        <td>{merchant.orders_count}</td>
+                        <td>{formatMoney(merchant.paid_revenue)}</td>
+                        <td>{formatDateTime(merchant.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <EmptyState>No stores yet.</EmptyState>
+            )}
+          </section>
+        ) : null}
+      </section>
+    </main>
+  )
 }
 
 function MerchantDashboardRoute({ path, session }) {
