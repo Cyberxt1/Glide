@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Papa from 'papaparse'
 import QRCode from 'qrcode'
 import './App.css'
+import glideLogo from './assets/logo.png'
 import { callFunction } from './lib/api'
 import { formatDateTime, formatMoney } from './lib/format'
 import { getConfigMessage, isSupabaseConfigured, supabase } from './lib/supabase'
@@ -148,7 +149,7 @@ function App() {
 
   if (path.startsWith('/admin')) {
     if (!sessionLoaded) return <main className="auth-page"><LoadingRows /></main>
-    if (!session) return <Login />
+    if (!session) return <AdminLogin />
     return <PlatformAdminDashboard session={session} />
   }
 
@@ -183,114 +184,124 @@ function Landing() {
   return (
     <main className="landing-page">
       <nav className="landing-nav" aria-label="Main navigation">
-        <Link className="brand" href="/">
+        <Link className="brand landing-brand" href="/">
           Glide
         </Link>
-        <div>
+        <div className="landing-nav-links">
+          <a href="#workflow">Workflow</a>
+          <a href="#why-glide">Why Glide</a>
+          <a href="#start">Start</a>
+        </div>
+        <div className="landing-nav-actions">
           <Link href="/login">Login</Link>
           <Link className="primary-action" href="/signup">
-            Start your store
+            Start Free
           </Link>
         </div>
       </nav>
 
       <section className="landing-hero">
         <div className="landing-hero-copy">
-          <p className="eyebrow">Retail checkout, simplified</p>
-          <h1>Self-checkout built for real stores.</h1>
-          <p className="lead">
-            Glide lets customers shop and pay from their phones while stores keep
-            inventory, payments, orders and receipt verification in one calm
-            operating system.
-          </p>
+          <p className="eyebrow">Retail operating system</p>
+          <h1>The operating system for modern retail.</h1>
+          <p className="lead">Manage inventory, payments, self-checkout and store operations from one platform.</p>
           <div className="action-row">
             <Link className="primary-action" href="/signup">
-              Start your store
+              Start Free
             </Link>
             <Link className="secondary-action" href="/login">
-              Merchant login
+              Login
             </Link>
           </div>
         </div>
-        <div className="landing-preview" aria-hidden="true">
-          <div className="preview-phone">
-            <span>Greenway Mart</span>
-            <strong>₦8,450</strong>
-            <p>3 items scanned</p>
-            <div>
-              <i />
-              <b>Coca Cola 50cl</b>
-              <em>₦500</em>
-            </div>
-            <div>
-              <i />
-              <b>Golden Penny Pasta</b>
-              <em>₦1,250</em>
-            </div>
-            <button type="button">Checkout</button>
-          </div>
-          <div className="preview-ops">
-            <span>Inventory updated</span>
-            <span>Payment confirmed</span>
-            <span>Receipt ready for exit</span>
-          </div>
+        <div className="landing-hero-mark" aria-hidden="true">
+          <img alt="" src={glideLogo} />
         </div>
       </section>
 
-      <section className="landing-line">
-        Built for supermarkets, minimarts, pharmacies, campus stores and
-        neighbourhood retailers.
+      <section className="landing-ribbon">
+        Built for supermarkets, pharmacies, convenience stores and modern retailers.
       </section>
 
-      <section className="landing-split">
+      <section className="landing-workflow" id="workflow">
+        <p className="eyebrow">One workflow</p>
+        <h2>Every part of your store, connected.</h2>
+        <div className="workflow-track" aria-label="Glide workflow">
+          <span>Inventory</span>
+          <span>Products</span>
+          <span>QR Checkout</span>
+          <span>Payments</span>
+          <span>Orders</span>
+          <span>Receipts</span>
+        </div>
+      </section>
+
+      <section className="landing-sticky-story" id="why-glide">
+        <div className="sticky-copy">
+          <p className="eyebrow">Why Glide</p>
+          <h2>Six things, done properly.</h2>
+        </div>
+        <div className="sticky-list">
+          <article>
+            <span>01</span>
+            <h3>Modern checkout.</h3>
+          </article>
+          <article>
+            <span>02</span>
+            <h3>Live inventory.</h3>
+          </article>
+          <article>
+            <span>03</span>
+            <h3>Fast payments.</h3>
+          </article>
+          <article>
+            <span>04</span>
+            <h3>Digital receipts.</h3>
+          </article>
+          <article>
+            <span>05</span>
+            <h3>Store analytics.</h3>
+          </article>
+          <article>
+            <span>06</span>
+            <h3>Built for physical retail.</h3>
+          </article>
+        </div>
+      </section>
+
+      <section className="landing-audiences">
         <div>
-          <p className="eyebrow">For shoppers</p>
-          <h2>Walk into any Glide powered store and shop easily.</h2>
+          <p className="eyebrow">For merchants</p>
+          <h2>Run the store.</h2>
+          <ul>
+            <li>Manage products</li>
+            <li>Track inventory</li>
+            <li>Monitor orders</li>
+          </ul>
         </div>
-        <ol className="landing-steps">
-          <li>Scan the store QR.</li>
-          <li>Scan products as you shop.</li>
-          <li>Pay securely on your phone.</li>
-          <li>Show your digital receipt at the exit.</li>
-        </ol>
-      </section>
-
-      <section className="landing-split">
         <div>
-          <p className="eyebrow">For stores</p>
-          <h2>A retail operating system for everyday selling.</h2>
-        </div>
-        <div className="landing-copy">
-          <p>
-            Glide is a retail operating system that lets customers shop and
-            check out from their phones while helping stores manage inventory,
-            payments and orders.
-          </p>
-          <p>
-            With Glide, store operations are unified and simplified: products,
-            stock, checkout QR codes, receipts, cashier activity and exit
-            verification all work from one place.
-          </p>
+          <p className="eyebrow">For customers</p>
+          <h2>Move faster.</h2>
+          <ul>
+            <li>Scan QR</li>
+            <li>Shop</li>
+            <li>Pay</li>
+          </ul>
         </div>
       </section>
 
-      <section className="landing-statements" aria-label="What Glide improves">
-        <p>Queues move faster.</p>
-        <p>Inventory updates automatically.</p>
-        <p>Receipts stay digital.</p>
-        <p>Staff see paid orders instantly.</p>
-        <p>Security verifies exits in seconds.</p>
-      </section>
-
-      <section className="landing-close">
-        <h2>A better way for physical stores to sell.</h2>
+      <section className="landing-close" id="start">
+        <h2>Run your store with Glide.</h2>
+        <p>Everything your store needs.</p>
         <Link className="primary-action" href="/signup">
-          Start your store
+          Start Free
         </Link>
       </section>
 
       <footer className="landing-footer">
-        <span>© {new Date().getFullYear()} Glide</span>
+        <Link className="brand landing-brand" href="/">
+          Glide
+        </Link>
         <div>
           <Link href="/dash">Product</Link>
           <a href="/docs">Documentation</a>
@@ -298,6 +309,7 @@ function Landing() {
           <a href="/terms">Terms</a>
           <a href="mailto:hello@useglide.app">Contact</a>
         </div>
+        <span>© {new Date().getFullYear()} Glide</span>
       </footer>
     </main>
   )
@@ -751,6 +763,76 @@ function Login() {
         </button>
         <p className="auth-switch">
           New to Glide? <Link href="/signup">Create a store account.</Link>
+        </p>
+      </form>
+    </main>
+  )
+}
+
+function AdminLogin() {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [message, setMessage] = useState(getConfigMessage())
+  const [busy, setBusy] = useState(false)
+
+  async function submit(event) {
+    event.preventDefault()
+    if (!supabase) return
+
+    setBusy(true)
+    setMessage('')
+
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) {
+      setBusy(false)
+      setMessage(error.message)
+      return
+    }
+
+    try {
+      await callFunction('platform-admin', { action: 'summary' })
+      navigate('/admin')
+    } catch (adminError) {
+      await supabase.auth.signOut()
+      setMessage(adminError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <main className="auth-page admin-auth-page">
+      <form className="auth-panel admin-auth-panel" onSubmit={submit}>
+        <Link className="brand" href="/">
+          Glide Admin
+        </Link>
+        <p className="eyebrow">Master control</p>
+        <h1>Admin login</h1>
+        <p>Use a platform admin email and password to manage Glide.</p>
+        {message ? <Notice tone="warning">{message}</Notice> : null}
+        <label>
+          Admin email
+          <input
+            required
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+        </label>
+        <label>
+          Admin password
+          <input
+            required
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+        </label>
+        <button disabled={busy || !isSupabaseConfigured} type="submit">
+          {busy ? 'Checking access...' : 'Enter admin'}
+        </button>
+        <p className="auth-switch">
+          Store owner? <Link href="/login">Go to merchant login.</Link>
         </p>
       </form>
     </main>
