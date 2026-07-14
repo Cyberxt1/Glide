@@ -150,7 +150,7 @@ function App() {
   if (path.startsWith('/admin')) {
     if (!sessionLoaded) return <main className="auth-page"><LoadingRows /></main>
     if (!session) return <AdminLogin />
-    return <PlatformAdminDashboard session={session} />
+    return <AdminGate session={session} />
   }
 
   if (path === '/cashier') {
@@ -349,13 +349,72 @@ const emptyGlobalProduct = {
   label_text: '',
 }
 
-function PlatformAdminDashboard({ session }) {
+function AdminGate({ session }) {
+  const [state, setState] = useState({ loading: true, admin: null, error: '' })
+
+  useEffect(() => {
+    let active = true
+
+    async function verifyAdmin() {
+      try {
+        const result = await callFunction('platform-admin', { action: 'verify' })
+        if (active) setState({ loading: false, admin: result.admin, error: '' })
+      } catch (error) {
+        await supabase.auth.signOut()
+        if (active) setState({ loading: false, admin: null, error: error.message })
+      }
+    }
+
+    verifyAdmin()
+    return () => {
+      active = false
+    }
+  }, [])
+
+  if (state.loading) {
+    return (
+      <main className="auth-page admin-auth-page">
+        <section className="auth-panel admin-auth-panel">
+          <p className="eyebrow">Securing console</p>
+          <h1>Checking admin access</h1>
+          <LoadingRows />
+        </section>
+      </main>
+    )
+  }
+
+  if (!state.admin) {
+    return (
+      <main className="auth-page admin-auth-page">
+        <section className="auth-panel admin-auth-panel">
+          <Link className="brand" href="/">
+            Glide Admin
+          </Link>
+          <p className="eyebrow">Access denied</p>
+          <h1>Platform admins only.</h1>
+          <Notice tone="error">{state.error || 'Your account is not allowed to open this console.'}</Notice>
+          <Link className="primary-action" href="/login">
+            Go to merchant login
+          </Link>
+        </section>
+      </main>
+    )
+  }
+
+  return <PlatformAdminDashboard admin={state.admin} session={session} />
+}
+
+function PlatformAdminDashboard({ admin, session }) {
   const [activeTab, setActiveTab] = useState('overview')
   const [summary, setSummary] = useState(null)
   const [products, setProducts] = useState([])
   const [merchants, setMerchants] = useState([])
+  const [staff, setStaff] = useState([])
+  const [orders, setOrders] = useState([])
+  const [auditLogs, setAuditLogs] = useState([])
   const [query, setQuery] = useState('')
   const [productForm, setProductForm] = useState(emptyGlobalProduct)
+  const [merchantForm, setMerchantForm] = useState(null)
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -373,6 +432,9 @@ function PlatformAdminDashboard({ session }) {
       setSummary(summaryResult.summary)
       setProducts(productResult.products || [])
       setMerchants(merchantResult.merchants || [])
+      if (summaryResult.admin?.email && summaryResult.admin.email !== admin.email) {
+        setMessage('Admin session refreshed.')
+      }
     } catch (error) {
       setMessage(error.message)
     } finally {
@@ -393,6 +455,105 @@ function PlatformAdminDashboard({ session }) {
   async function searchProducts(event) {
     event.preventDefault()
     await loadAdmin()
+  }
+
+  async function loadStaff() {
+    setLoading(true)
+    setMessage('')
+    try {
+      const result = await callFunction('platform-admin', { action: 'list-staff' })
+      setStaff(result.staff || [])
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function loadOrders() {
+    setLoading(true)
+    setMessage('')
+    try {
+      const result = await callFunction('platform-admin', { action: 'list-orders' })
+      setOrders(result.orders || [])
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function loadAudit() {
+    setLoading(true)
+    setMessage('')
+    try {
+      const result = await callFunction('platform-admin', { action: 'list-audit' })
+      setAuditLogs(result.auditLogs || [])
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function openMerchantEdit(merchant) {
+    setMerchantForm({
+      id: merchant.id,
+      store_name: merchant.store_name || '',
+      branch_name: merchant.branch_name || '',
+    })
+  }
+
+  function updateMerchantForm(field, value) {
+    setMerchantForm((current) => ({ ...current, [field]: value }))
+  }
+
+  async function saveMerchant(event) {
+    event.preventDefault()
+    setSaving(true)
+    setMessage('')
+
+    try {
+      const result = await callFunction('platform-admin', {
+        action: 'update-merchant',
+        merchant: merchantForm,
+      })
+      setMerchants((current) =>
+        current.map((merchant) =>
+          merchant.id === result.merchant.id ? { ...merchant, ...result.merchant } : merchant,
+        ),
+      )
+      setMerchantForm(null)
+      setMessage('Store profile updated.')
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function setStaffActive(member, isActive) {
+    try {
+      const result = await callFunction('platform-admin', {
+        action: 'set-staff-active',
+        id: member.id,
+        isActive,
+      })
+      setStaff((current) =>
+        current.map((item) => (item.id === result.staff.id ? result.staff : item)),
+      )
+      setMessage(`${result.staff.email} ${result.staff.is_active ? 'enabled' : 'disabled'}.`)
+    } catch (error) {
+      setMessage(error.message)
+    }
+  }
+
+  function changeTab(tab) {
+    setActiveTab(tab)
+    if (tab === 'overview' || tab === 'products' || tab === 'merchants') loadAdmin()
+    if (tab === 'staff') loadStaff()
+    if (tab === 'orders') loadOrders()
+    if (tab === 'audit') loadAudit()
   }
 
   function editProduct(product) {
@@ -460,16 +621,25 @@ function PlatformAdminDashboard({ session }) {
         <Link className="brand" href="/admin">
           Glide Admin
         </Link>
-        <span>{session.user.email}</span>
+        <span>{admin.email || session.user.email}</span>
         <nav>
-          <button className={activeTab === 'overview' ? 'active' : ''} type="button" onClick={() => setActiveTab('overview')}>
+          <button className={activeTab === 'overview' ? 'active' : ''} type="button" onClick={() => changeTab('overview')}>
             Overview
           </button>
-          <button className={activeTab === 'products' ? 'active' : ''} type="button" onClick={() => setActiveTab('products')}>
+          <button className={activeTab === 'products' ? 'active' : ''} type="button" onClick={() => changeTab('products')}>
             Product database
           </button>
-          <button className={activeTab === 'merchants' ? 'active' : ''} type="button" onClick={() => setActiveTab('merchants')}>
+          <button className={activeTab === 'merchants' ? 'active' : ''} type="button" onClick={() => changeTab('merchants')}>
             Stores
+          </button>
+          <button className={activeTab === 'staff' ? 'active' : ''} type="button" onClick={() => changeTab('staff')}>
+            Staff
+          </button>
+          <button className={activeTab === 'orders' ? 'active' : ''} type="button" onClick={() => changeTab('orders')}>
+            Orders
+          </button>
+          <button className={activeTab === 'audit' ? 'active' : ''} type="button" onClick={() => changeTab('audit')}>
+            Audit
           </button>
         </nav>
         <button type="button" onClick={logout}>
@@ -493,6 +663,7 @@ function PlatformAdminDashboard({ session }) {
               <Metric label="Master products" value={summary?.globalProductCount || 0} />
               <Metric label="Orders" value={summary?.orderCount || 0} />
               <Metric label="Paid orders" value={summary?.paidOrderCount || 0} />
+              <Metric label="Active staff" value={`${summary?.activeStaffCount || 0}/${summary?.staffCount || 0}`} />
               <Metric label="Revenue tracked" value={formatMoney(summary?.totalRevenue || 0)} />
             </div>
             <TwoColumn>
@@ -518,6 +689,18 @@ function PlatformAdminDashboard({ session }) {
                   />
                 ) : (
                   <EmptyState>No master products yet.</EmptyState>
+                )}
+              </Panel>
+              <Panel title="Admin audit">
+                {summary?.recentAudit?.length ? (
+                  <SimpleList
+                    rows={summary.recentAudit.map((entry) => ({
+                      label: entry.action.replaceAll('_', ' '),
+                      value: formatDateTime(entry.created_at),
+                    }))}
+                  />
+                ) : (
+                  <EmptyState>No admin actions yet.</EmptyState>
                 )}
               </Panel>
             </TwoColumn>
@@ -574,7 +757,7 @@ function PlatformAdminDashboard({ session }) {
                 <button type="submit">Search</button>
               </form>
               {products.length ? (
-                <div className="table-wrap compact-table">
+                <div className="table-wrap compact-table admin-products-table">
                   <table>
                     <thead>
                       <tr>
@@ -613,37 +796,217 @@ function PlatformAdminDashboard({ session }) {
         ) : null}
 
         {activeTab === 'merchants' ? (
+          <section className="admin-grid admin-store-grid">
+            <section className="panel">
+              <h2>Stores on Glide</h2>
+              {merchants.length ? (
+                <div className="table-wrap compact-table admin-stores-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Store</th>
+                        <th>Owner</th>
+                        <th>Products</th>
+                        <th>Staff</th>
+                        <th>Paid revenue</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {merchants.map((merchant) => (
+                        <tr key={merchant.id}>
+                          <td>
+                            <div className="product-cell">
+                              <strong>{merchant.store_name}</strong>
+                              <span>{merchant.branch_name}</span>
+                            </div>
+                          </td>
+                          <td>{merchant.owner_email}</td>
+                          <td>{merchant.products_count}</td>
+                          <td>{merchant.active_staff_count}/{merchant.staff_count}</td>
+                          <td>{formatMoney(merchant.paid_revenue)}</td>
+                          <td className="table-actions">
+                            <button type="button" onClick={() => openMerchantEdit(merchant)}>
+                              Edit
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <EmptyState>No stores yet.</EmptyState>
+              )}
+            </section>
+
+            <form className="product-form" onSubmit={saveMerchant}>
+              <h2>{merchantForm ? 'Edit store' : 'Select a store'}</h2>
+              {merchantForm ? (
+                <>
+                  <label>
+                    Store name
+                    <input
+                      required
+                      value={merchantForm.store_name}
+                      onChange={(event) => updateMerchantForm('store_name', event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Branch name
+                    <input
+                      required
+                      value={merchantForm.branch_name}
+                      onChange={(event) => updateMerchantForm('branch_name', event.target.value)}
+                    />
+                  </label>
+                  <div className="action-row">
+                    <button disabled={saving} type="submit">
+                      {saving ? 'Saving...' : 'Save store'}
+                    </button>
+                    <button type="button" onClick={() => setMerchantForm(null)}>
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <EmptyState>Choose a store to update its public profile.</EmptyState>
+              )}
+            </form>
+          </section>
+        ) : null}
+
+        {activeTab === 'staff' ? (
           <section className="panel">
-            <h2>Stores on Glide</h2>
-            {merchants.length ? (
-              <div className="table-wrap compact-table">
+            <div className="modal-title-row">
+              <h2>Staff access</h2>
+              <button type="button" onClick={loadStaff}>
+                Refresh
+              </button>
+            </div>
+            {loading ? <LoadingRows /> : null}
+            {staff.length ? (
+              <div className="table-wrap compact-table admin-staff-table">
                 <table>
                   <thead>
                     <tr>
+                      <th>Staff</th>
                       <th>Store</th>
-                      <th>Branch</th>
-                      <th>Products</th>
-                      <th>Orders</th>
-                      <th>Paid revenue</th>
+                      <th>Role</th>
+                      <th>Status</th>
                       <th>Created</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {merchants.map((merchant) => (
-                      <tr key={merchant.id}>
-                        <td>{merchant.store_name}</td>
-                        <td>{merchant.branch_name}</td>
-                        <td>{merchant.products_count}</td>
-                        <td>{merchant.orders_count}</td>
-                        <td>{formatMoney(merchant.paid_revenue)}</td>
-                        <td>{formatDateTime(merchant.created_at)}</td>
+                    {staff.map((member) => (
+                      <tr key={member.id}>
+                        <td>
+                          <div className="product-cell">
+                            <strong>{member.full_name || 'Not set'}</strong>
+                            <span>{member.email}</span>
+                          </div>
+                        </td>
+                        <td>{member.merchant_profile?.store_name || 'Unknown store'}</td>
+                        <td>{member.role}</td>
+                        <td>
+                          <StatusPill tone={member.is_active ? 'success' : 'neutral'}>
+                            {member.is_active ? 'Active' : 'Disabled'}
+                          </StatusPill>
+                        </td>
+                        <td>{formatDateTime(member.created_at)}</td>
+                        <td className="table-actions">
+                          <button type="button" onClick={() => setStaffActive(member, !member.is_active)}>
+                            {member.is_active ? 'Disable' : 'Enable'}
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             ) : (
-              <EmptyState>No stores yet.</EmptyState>
+              <EmptyState>No staff accounts yet.</EmptyState>
+            )}
+          </section>
+        ) : null}
+
+        {activeTab === 'orders' ? (
+          <section className="panel">
+            <div className="modal-title-row">
+              <h2>Recent orders</h2>
+              <button type="button" onClick={loadOrders}>
+                Refresh
+              </button>
+            </div>
+            {loading ? <LoadingRows /> : null}
+            {orders.length ? (
+              <div className="table-wrap compact-table admin-orders-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Order</th>
+                      <th>Store</th>
+                      <th>Status</th>
+                      <th>Payment</th>
+                      <th>Total</th>
+                      <th>Created</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orders.map((order) => (
+                      <tr key={order.id}>
+                        <td>{order.order_number}</td>
+                        <td>{order.merchant_profile?.store_name || 'Unknown store'}</td>
+                        <td>{order.status}</td>
+                        <td>{order.payment_status}</td>
+                        <td>{formatMoney(order.total_amount)}</td>
+                        <td>{formatDateTime(order.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <EmptyState>No orders yet.</EmptyState>
+            )}
+          </section>
+        ) : null}
+
+        {activeTab === 'audit' ? (
+          <section className="panel">
+            <div className="modal-title-row">
+              <h2>Audit trail</h2>
+              <button type="button" onClick={loadAudit}>
+                Refresh
+              </button>
+            </div>
+            {loading ? <LoadingRows /> : null}
+            {auditLogs.length ? (
+              <div className="table-wrap compact-table admin-audit-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Action</th>
+                      <th>Admin</th>
+                      <th>Details</th>
+                      <th>Time</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditLogs.map((entry) => (
+                      <tr key={entry.id}>
+                        <td>{entry.action.replaceAll('_', ' ')}</td>
+                        <td>{entry.admin_email}</td>
+                        <td className="audit-details">{JSON.stringify(entry.details || {})}</td>
+                        <td>{formatDateTime(entry.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <EmptyState>No admin actions yet.</EmptyState>
             )}
           </section>
         ) : null}
@@ -1870,7 +2233,7 @@ function Products() {
         <LoadingRows />
       ) : visibleProducts.length ? (
         <>
-          <div className="table-wrap compact-table">
+          <div className="table-wrap compact-table inventory-table">
           <table>
             <thead>
               <tr>
@@ -1905,8 +2268,8 @@ function Products() {
                       {product.barcode}
                     </button>
                   </td>
-                  <td>{product.sku || 'Not set'}</td>
-                  <td>{formatMoney(product.price)}</td>
+                  <td className="sku-cell">{product.sku || 'Not set'}</td>
+                  <td className="money-cell">{formatMoney(product.price)}</td>
                   <td>
                     <div className="stock-cell">
                       <strong>

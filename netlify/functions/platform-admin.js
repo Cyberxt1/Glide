@@ -26,6 +26,14 @@ async function audit(supabase, user, action, details = {}) {
     .catch(() => {})
 }
 
+async function adminProfile(user) {
+  return {
+    id: user.id,
+    email: user.email,
+    role: user.app_metadata?.role || user.app_metadata?.glide_role || 'platform_admin',
+  }
+}
+
 async function summary(supabase) {
   const [
     merchantCount,
@@ -34,8 +42,11 @@ async function summary(supabase) {
     orderCount,
     paidOrderCount,
     smartAddCount,
+    staffCount,
+    activeStaffCount,
     recentMerchants,
     recentGlobalProducts,
+    recentAudit,
     paidOrders,
   ] = await Promise.all([
     tableCount(supabase, 'merchant_profile'),
@@ -44,6 +55,8 @@ async function summary(supabase) {
     tableCount(supabase, 'orders'),
     tableCount(supabase, 'orders', (request) => request.eq('payment_status', 'paid')),
     tableCount(supabase, 'smart_add_items'),
+    tableCount(supabase, 'staff_members'),
+    tableCount(supabase, 'staff_members', (request) => request.eq('is_active', true)),
     supabase
       .from('merchant_profile')
       .select('id,store_name,branch_name,created_at')
@@ -54,11 +67,17 @@ async function summary(supabase) {
       .select('id,barcode,name,category,size,updated_at')
       .order('updated_at', { ascending: false })
       .limit(8),
+    supabase
+      .from('platform_admin_audit_logs')
+      .select('id,admin_email,action,details,created_at')
+      .order('created_at', { ascending: false })
+      .limit(8),
     supabase.from('orders').select('total_amount').eq('payment_status', 'paid'),
   ])
 
   if (recentMerchants.error) throw recentMerchants.error
   if (recentGlobalProducts.error) throw recentGlobalProducts.error
+  if (recentAudit.error) throw recentAudit.error
   if (paidOrders.error) throw paidOrders.error
 
   return {
@@ -68,35 +87,49 @@ async function summary(supabase) {
     orderCount,
     paidOrderCount,
     smartAddCount,
+    staffCount,
+    activeStaffCount,
     totalRevenue: (paidOrders.data || []).reduce(
       (sum, order) => sum + Number(order.total_amount || 0),
       0,
     ),
     recentMerchants: recentMerchants.data || [],
     recentGlobalProducts: recentGlobalProducts.data || [],
+    recentAudit: recentAudit.data || [],
   }
 }
 
 async function listMerchants(supabase) {
   const result = await supabase
     .from('merchant_profile')
-    .select('id,store_name,branch_name,created_at,products(id),orders(id,total_amount,payment_status)')
+    .select('id,user_id,store_name,branch_name,created_at,updated_at,products(id),orders(id,total_amount,payment_status,status),staff_members(id,is_active)')
     .order('created_at', { ascending: false })
     .limit(50)
 
   if (result.error) throw result.error
 
-  return (result.data || []).map((merchant) => ({
-    id: merchant.id,
-    store_name: merchant.store_name,
-    branch_name: merchant.branch_name,
-    created_at: merchant.created_at,
-    products_count: merchant.products?.length || 0,
-    orders_count: merchant.orders?.length || 0,
-    paid_revenue: (merchant.orders || [])
-      .filter((order) => order.payment_status === 'paid')
-      .reduce((sum, order) => sum + Number(order.total_amount || 0), 0),
-  }))
+  return Promise.all(
+    (result.data || []).map(async (merchant) => {
+      const ownerResult = await supabase.auth.admin.getUserById(merchant.user_id).catch(() => null)
+      const orders = merchant.orders || []
+      return {
+        id: merchant.id,
+        owner_email: ownerResult?.data?.user?.email || 'Unknown owner',
+        store_name: merchant.store_name,
+        branch_name: merchant.branch_name,
+        created_at: merchant.created_at,
+        updated_at: merchant.updated_at,
+        products_count: merchant.products?.length || 0,
+        staff_count: merchant.staff_members?.length || 0,
+        active_staff_count: (merchant.staff_members || []).filter((staff) => staff.is_active).length,
+        orders_count: orders.length,
+        paid_orders_count: orders.filter((order) => order.payment_status === 'paid').length,
+        paid_revenue: orders
+          .filter((order) => order.payment_status === 'paid')
+          .reduce((sum, order) => sum + Number(order.total_amount || 0), 0),
+      }
+    }),
+  )
 }
 
 async function listProducts(supabase, query) {
@@ -145,6 +178,78 @@ async function saveProduct(supabase, product) {
   return result.data
 }
 
+async function updateMerchant(supabase, merchant) {
+  const id = cleanText(merchant.id, 80)
+  const storeName = cleanText(merchant.store_name, 160)
+  const branchName = cleanText(merchant.branch_name, 160)
+
+  if (!id) throw new Error('Store id is required.')
+  if (!storeName) throw new Error('Store name is required.')
+  if (!branchName) throw new Error('Branch name is required.')
+
+  const result = await supabase
+    .from('merchant_profile')
+    .update({
+      store_name: storeName,
+      branch_name: branchName,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .select('id,store_name,branch_name,updated_at')
+    .single()
+
+  if (result.error) throw result.error
+  return result.data
+}
+
+async function listStaff(supabase) {
+  const result = await supabase
+    .from('staff_members')
+    .select('id,email,full_name,role,is_active,created_at,updated_at,merchant_profile(store_name,branch_name)')
+    .order('created_at', { ascending: false })
+    .limit(120)
+
+  if (result.error) throw result.error
+  return result.data || []
+}
+
+async function setStaffActive(supabase, id, isActive) {
+  const staffId = cleanText(id, 80)
+  if (!staffId) throw new Error('Staff id is required.')
+
+  const result = await supabase
+    .from('staff_members')
+    .update({ is_active: Boolean(isActive), updated_at: new Date().toISOString() })
+    .eq('id', staffId)
+    .select('id,email,full_name,role,is_active,created_at,updated_at,merchant_profile(store_name,branch_name)')
+    .single()
+
+  if (result.error) throw result.error
+  return result.data
+}
+
+async function listOrders(supabase) {
+  const result = await supabase
+    .from('orders')
+    .select('id,order_number,status,payment_status,total_amount,created_at,paid_at,exited_at,merchant_profile(store_name,branch_name)')
+    .order('created_at', { ascending: false })
+    .limit(100)
+
+  if (result.error) throw result.error
+  return result.data || []
+}
+
+async function listAudit(supabase) {
+  const result = await supabase
+    .from('platform_admin_audit_logs')
+    .select('id,admin_email,action,details,created_at')
+    .order('created_at', { ascending: false })
+    .limit(100)
+
+  if (result.error) throw result.error
+  return result.data || []
+}
+
 export async function handler(event) {
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed.' })
 
@@ -153,8 +258,12 @@ export async function handler(event) {
     const user = await requirePlatformAdmin(event, supabase)
     const body = JSON.parse(event.body || '{}')
 
+    if (body.action === 'verify') {
+      return json(200, { admin: await adminProfile(user) })
+    }
+
     if (body.action === 'summary') {
-      return json(200, { summary: await summary(supabase) })
+      return json(200, { summary: await summary(supabase), admin: await adminProfile(user) })
     }
 
     if (body.action === 'list-merchants') {
@@ -163,6 +272,36 @@ export async function handler(event) {
 
     if (body.action === 'list-products') {
       return json(200, { products: await listProducts(supabase, body.query) })
+    }
+
+    if (body.action === 'list-staff') {
+      return json(200, { staff: await listStaff(supabase) })
+    }
+
+    if (body.action === 'list-orders') {
+      return json(200, { orders: await listOrders(supabase) })
+    }
+
+    if (body.action === 'list-audit') {
+      return json(200, { auditLogs: await listAudit(supabase) })
+    }
+
+    if (body.action === 'update-merchant') {
+      const merchant = await updateMerchant(supabase, body.merchant || {})
+      await audit(supabase, user, 'merchant_updated', {
+        merchant_id: merchant.id,
+        store_name: merchant.store_name,
+      })
+      return json(200, { merchant })
+    }
+
+    if (body.action === 'set-staff-active') {
+      const staff = await setStaffActive(supabase, body.id, body.isActive)
+      await audit(supabase, user, staff.is_active ? 'staff_enabled' : 'staff_disabled', {
+        staff_id: staff.id,
+        email: staff.email,
+      })
+      return json(200, { staff })
     }
 
     if (body.action === 'save-product') {

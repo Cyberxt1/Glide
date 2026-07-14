@@ -73,7 +73,7 @@ export async function requirePlatformAdmin(event, supabase) {
 
   const userEmail = String(data.user.email || '').toLowerCase()
   const metadataRole =
-    data.user.app_metadata?.role || data.user.user_metadata?.role || data.user.app_metadata?.glide_role
+    data.user.app_metadata?.role || data.user.app_metadata?.glide_role
 
   if (!allowedEmails.includes(userEmail) && metadataRole !== 'platform_admin') {
     throw new Error('Platform admin access required.')
