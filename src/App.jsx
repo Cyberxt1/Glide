@@ -1846,7 +1846,7 @@ function Products() {
                       {product.is_available ? 'Available' : 'Disabled'}
                     </StatusPill>
                   </td>
-                  <td>
+                  <td className="table-actions">
                     <button type="button" onClick={() => openEditProduct(product)}>
                       Edit
                     </button>
