@@ -40,7 +40,7 @@ function usePath() {
 
 function navigate(path) {
   window.history.pushState({}, '', path)
-  window.dispatchEvent(new PopStateEvent('popstate'))
+  window.dispatchEvent(new Event('popstate'))
 }
 
 function Link({ href, children, className }) {
