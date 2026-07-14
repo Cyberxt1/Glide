@@ -7,7 +7,11 @@ function bad(message, status = 400) {
 }
 
 function cleanText(value, limit = 200) {
-  return String(value || '').trim().slice(0, limit)
+  return String(value ?? '').trim().slice(0, limit)
+}
+
+function cleanBarcode(value) {
+  return cleanText(value, 80).replace(/\s+/g, '')
 }
 
 function getSiteUrl(event) {
@@ -182,7 +186,7 @@ async function listProducts(supabase, query) {
 
 async function saveProduct(supabase, product) {
   const id = cleanText(product.id, 80) || null
-  const barcode = cleanText(product.barcode, 80).replace(/\s+/g, '')
+  const barcode = cleanBarcode(product.barcode)
   const name = cleanText(product.name, 160)
   const category = cleanText(product.category, 100) || null
   const size = cleanText(product.size, 80) || null

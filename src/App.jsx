@@ -1843,6 +1843,10 @@ function smartNameFromText(text = '', barcode = '') {
   return cleaned[0]?.slice(0, 80) || ''
 }
 
+function cleanBarcodeText(value) {
+  return String(value ?? '').trim().replace(/\s+/g, '')
+}
+
 function SmartAddDashboard() {
   const [state, setState] = useState({ loading: true, links: [], error: '', created: null })
   const [busy, setBusy] = useState(false)
@@ -2005,7 +2009,7 @@ function SmartAddPhone({ token }) {
   }
 
   async function lookupBarcode(nextBarcode = barcode) {
-    const cleanBarcode = String(nextBarcode || '').trim()
+    const cleanBarcode = cleanBarcodeText(nextBarcode)
     if (!cleanBarcode) {
       setMessage('Enter or scan a barcode first.')
       return
@@ -2237,7 +2241,7 @@ function SmartAddPhone({ token }) {
   )
 }
 
-function CategoryPicker({ value, onChange, open, onOpenChange }) {
+function CategoryPicker({ value, onChange, open, onOpenChange, disabled = false }) {
   const [customValue, setCustomValue] = useState('')
 
   function useCustomCategory() {
@@ -2251,7 +2255,7 @@ function CategoryPicker({ value, onChange, open, onOpenChange }) {
   return (
     <label className="category-picker">
       Category
-      <button type="button" onClick={() => onOpenChange(!open)}>
+      <button disabled={disabled} type="button" onClick={() => onOpenChange(!open)}>
         <span>{value || 'Choose category'}</span>
         <b>{open ? 'Close' : 'Open'}</b>
       </button>
@@ -2296,6 +2300,7 @@ function ProductIntakePhone({ token }) {
   const [state, setState] = useState({ loading: true, error: '', link: null })
   const [barcode, setBarcode] = useState('')
   const [form, setForm] = useState({ name: '', category: '', size: '', labelText: '' })
+  const [duplicateProduct, setDuplicateProduct] = useState(null)
   const [categoryOpen, setCategoryOpen] = useState(false)
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
@@ -2332,10 +2337,11 @@ function ProductIntakePhone({ token }) {
   }
 
   async function checkBarcode(scannedBarcode) {
-    const cleanBarcode = String(scannedBarcode || '').trim()
+    const cleanBarcode = cleanBarcodeText(scannedBarcode)
     if (!cleanBarcode) return
 
     setBarcode(cleanBarcode)
+    setDuplicateProduct(null)
     setMessage('Checking barcode...')
 
     try {
@@ -2346,11 +2352,12 @@ function ProductIntakePhone({ token }) {
       )
 
       if (result.exists) {
-        setBarcode('')
-        setMessage(`Duplicate barcode. ${result.product?.name || 'This product'} already exists.`)
+        setDuplicateProduct(result.product)
+        setMessage(`Already in database: ${result.product?.name || cleanBarcode}. Scan another barcode.`)
         return
       }
 
+      setForm({ name: '', category: '', size: '', labelText: '' })
       setMessage('New barcode scanned. Add product details.')
     } catch (error) {
       setMessage(error.message)
@@ -2454,6 +2461,7 @@ function ProductIntakePhone({ token }) {
 
       setMessage(`${result.product.name} saved to the product database.`)
       setBarcode('')
+      setDuplicateProduct(null)
       setForm({ name: '', category: '', size: '', labelText: '' })
     } catch (error) {
       setMessage(error.message)
@@ -2472,12 +2480,19 @@ function ProductIntakePhone({ token }) {
         <h1>Scan product</h1>
         <p className="lead">Scan a barcode, add product details, submit once.</p>
         {message ? <Notice tone={message.includes('saved') || message.includes('New barcode') ? 'success' : 'warning'}>{message}</Notice> : null}
+        {duplicateProduct ? (
+          <Notice tone="warning">
+            <strong>{duplicateProduct.name}</strong> already uses barcode {duplicateProduct.barcode}.
+            Scan another product before entering details.
+          </Notice>
+        ) : null}
 
         <div className="smart-scanner">
           <video ref={videoRef} muted playsInline />
           <button type="button" onClick={scanBarcode}>
             Scan barcode
           </button>
+          <small>Leading zeroes are kept exactly as scanned.</small>
         </div>
 
         <form className="smart-product-form" onSubmit={saveProduct}>
@@ -2488,6 +2503,7 @@ function ProductIntakePhone({ token }) {
           <label>
             Label text or notes
             <textarea
+              disabled={Boolean(duplicateProduct)}
               rows="3"
               value={form.labelText}
               onChange={(event) => suggestFromText(event.target.value)}
@@ -2496,9 +2512,10 @@ function ProductIntakePhone({ token }) {
           </label>
           <label>
             Product name
-            <input required value={form.name} onChange={(event) => update('name', event.target.value)} />
+            <input disabled={Boolean(duplicateProduct)} required value={form.name} onChange={(event) => update('name', event.target.value)} />
           </label>
           <CategoryPicker
+            disabled={Boolean(duplicateProduct)}
             open={categoryOpen}
             value={form.category}
             onOpenChange={setCategoryOpen}
@@ -2506,9 +2523,9 @@ function ProductIntakePhone({ token }) {
           />
           <label>
             Size
-            <input value={form.size} onChange={(event) => update('size', event.target.value)} placeholder="500ml, 1kg" />
+            <input disabled={Boolean(duplicateProduct)} value={form.size} onChange={(event) => update('size', event.target.value)} placeholder="500ml, 1kg" />
           </label>
-          <button disabled={busy || !barcode} type="submit">
+          <button disabled={busy || !barcode || Boolean(duplicateProduct)} type="submit">
             {busy ? 'Saving...' : 'Save to database'}
           </button>
         </form>

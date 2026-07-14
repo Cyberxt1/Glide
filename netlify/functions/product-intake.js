@@ -5,11 +5,25 @@ function bad(message, status = 400) {
 }
 
 function cleanText(value, limit = 200) {
-  return String(value || '').trim().slice(0, limit)
+  return String(value ?? '').trim().slice(0, limit)
 }
 
 function cleanBarcode(value) {
   return cleanText(value, 80).replace(/\s+/g, '')
+}
+
+function barcodeCandidates(barcode) {
+  const candidates = new Set([barcode])
+
+  if (/^\d{12}$/.test(barcode)) {
+    candidates.add(`0${barcode}`)
+  }
+
+  if (/^0\d{12}$/.test(barcode)) {
+    candidates.add(barcode.slice(1))
+  }
+
+  return [...candidates]
 }
 
 async function loadActiveLink(supabase, rawToken) {
@@ -57,7 +71,8 @@ export async function handler(event) {
       const existing = await supabase
         .from('global_products')
         .select('id,barcode,name,category,size,is_hidden')
-        .eq('barcode', barcode)
+        .in('barcode', barcodeCandidates(barcode))
+        .limit(1)
         .maybeSingle()
 
       if (existing.error) throw existing.error
@@ -79,7 +94,8 @@ export async function handler(event) {
       const duplicate = await supabase
         .from('global_products')
         .select('id,name')
-        .eq('barcode', barcode)
+        .in('barcode', barcodeCandidates(barcode))
+        .limit(1)
         .maybeSingle()
 
       if (duplicate.error) throw duplicate.error

@@ -7,11 +7,25 @@ function bad(message) {
 }
 
 function cleanText(value, limit = 200) {
-  return String(value || '').trim().slice(0, limit)
+  return String(value ?? '').trim().slice(0, limit)
 }
 
 function cleanBarcode(value) {
   return cleanText(value, 80).replace(/\s+/g, '')
+}
+
+function barcodeCandidates(barcode) {
+  const candidates = new Set([barcode])
+
+  if (/^\d{12}$/.test(barcode)) {
+    candidates.add(`0${barcode}`)
+  }
+
+  if (/^0\d{12}$/.test(barcode)) {
+    candidates.add(barcode.slice(1))
+  }
+
+  return [...candidates]
 }
 
 function getSiteUrl(event) {
@@ -128,7 +142,8 @@ export async function handler(event) {
       const result = await supabase
         .from('global_products')
         .select('*')
-        .eq('barcode', barcode)
+        .in('barcode', barcodeCandidates(barcode))
+        .limit(1)
         .maybeSingle()
 
       if (result.error) return bad(result.error.message)
