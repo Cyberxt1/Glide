@@ -7,7 +7,7 @@ import { formatDateTime, formatMoney } from './lib/format'
 import { getConfigMessage, isSupabaseConfigured, supabase } from './lib/supabase'
 
 const productColumns =
-  'id,name,barcode,sku,category,price,quantity,low_stock_threshold,is_available,track_inventory,created_at'
+  'id,name,barcode,sku,category,price,quantity,low_stock_threshold,is_available,track_inventory,size,image_url,created_at'
 
 const emptyProduct = {
   name: '',
@@ -19,6 +19,8 @@ const emptyProduct = {
   low_stock_threshold: '5',
   is_available: true,
   track_inventory: true,
+  size: '',
+  image_url: '',
 }
 
 const SHOPPER_IDLE_TIMEOUT_MS = 20 * 60 * 1000
@@ -113,6 +115,9 @@ function App() {
     if (!session) return <Login />
     return <CashierPage session={session} />
   }
+
+  const smartAddMatch = path.match(/^\/smart-add\/([^/]+)$/)
+  if (smartAddMatch) return <SmartAddPhone token={smartAddMatch[1]} />
 
   const qrMatch = path.match(/^\/s\/([^/]+)$/)
   if (qrMatch) return <CustomerCheckout qrCode={qrMatch[1]} />
@@ -225,6 +230,7 @@ function MerchantDashboardRoute({ path, session }) {
 
   if (path === '/dash') return <AppShell session={session} main={<Dashboard />} />
   if (path === '/dash/products') return <AppShell session={session} main={<Products />} />
+  if (path === '/dash/smart-add') return <AppShell session={session} main={<SmartAddDashboard />} />
   if (path === '/dash/import') return <AppShell session={session} main={<CsvImport />} />
   if (path === '/dash/qr') return <AppShell session={session} main={<QrPage />} />
   if (path === '/dash/verify') return <AppShell session={session} main={<VerifyReceipt />} />
@@ -502,6 +508,7 @@ function AppShell({ session, main }) {
         <nav>
           <Link href="/dash">Dashboard</Link>
           <Link href="/dash/products">Products</Link>
+          <Link href="/dash/smart-add">Smart Add</Link>
           <Link href="/dash/import">CSV import</Link>
           <Link href="/dash/qr">Store QR</Link>
           <Link href="/dash/verify">Verify receipt</Link>
@@ -583,6 +590,9 @@ function Dashboard() {
           <div className="quick-actions">
             <Link href="/dash/products?action=add" className="primary-action">
               Add product
+            </Link>
+            <Link href="/dash/smart-add" className="primary-action">
+              Smart Add
             </Link>
             <Link href="/dash/import" className="secondary-action">
               Import CSV
@@ -706,6 +716,492 @@ async function loadDashboardSummaryFromClient() {
   }
 }
 
+function smartCategoryFromText(text = '') {
+  const value = text.toLowerCase()
+  const rules = [
+    ['Beverages', ['drink', 'juice', 'water', 'soda', 'cola', 'malt', 'milk', 'tea', 'coffee']],
+    ['Snacks', ['biscuit', 'chips', 'cracker', 'sweet', 'chocolate', 'cookie', 'wafer']],
+    ['Pharmacy', ['tablet', 'capsule', 'syrup', 'cream', 'mg', 'medicine', 'pain', 'vitamin']],
+    ['Personal care', ['soap', 'shampoo', 'toothpaste', 'cream', 'lotion', 'deodorant']],
+    ['Household', ['detergent', 'bleach', 'cleaner', 'tissue', 'napkin', 'soap powder']],
+    ['Groceries', ['rice', 'beans', 'flour', 'oil', 'salt', 'sugar', 'pasta', 'noodle']],
+    ['Electronics', ['charger', 'cable', 'battery', 'earphone', 'adapter']],
+    ['Books', ['book', 'notebook', 'journal', 'pen', 'pencil']],
+  ]
+
+  return rules.find(([, words]) => words.some((word) => value.includes(word)))?.[0] || 'General'
+}
+
+function smartSizeFromText(text = '') {
+  return (
+    text.match(/\b\d+(?:\.\d+)?\s?(?:ml|l|cl|g|kg|mg|pcs|pieces|pack|packs|sachets?)\b/i)?.[0] || ''
+  )
+}
+
+function smartNameFromText(text = '', barcode = '') {
+  const cleaned = text
+    .split(/\n|,|\|/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !barcode || !line.includes(barcode))
+    .filter((line) => !/^\d+$/.test(line))
+    .sort((a, b) => b.length - a.length)
+
+  return cleaned[0]?.slice(0, 80) || ''
+}
+
+async function imageFileToDataUrl(file) {
+  if (!file) return ''
+
+  const image = document.createElement('img')
+  const source = URL.createObjectURL(file)
+  image.src = source
+  await new Promise((resolve, reject) => {
+    image.onload = resolve
+    image.onerror = reject
+  })
+
+  const scale = Math.min(1, 960 / Math.max(image.naturalWidth, image.naturalHeight))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
+  const context = canvas.getContext('2d')
+  context.drawImage(image, 0, 0, canvas.width, canvas.height)
+  URL.revokeObjectURL(source)
+
+  return canvas.toDataURL('image/jpeg', 0.72)
+}
+
+async function extractTextFromImage(file) {
+  if (!file || !('TextDetector' in window) || !window.createImageBitmap) return ''
+
+  try {
+    const detector = new window.TextDetector()
+    const bitmap = await createImageBitmap(file)
+    const results = await detector.detect(bitmap)
+    bitmap.close?.()
+    return results.map((item) => item.rawValue).filter(Boolean).join('\n')
+  } catch {
+    return ''
+  }
+}
+
+function SmartAddDashboard() {
+  const [state, setState] = useState({ loading: true, links: [], error: '', created: null })
+  const [busy, setBusy] = useState(false)
+
+  async function loadLinks() {
+    setState((current) => ({ ...current, loading: true, error: '' }))
+    try {
+      const data = await callFunction('smart-add', { action: 'list-links' })
+      setState({ loading: false, links: data.links || [], error: '', created: null })
+    } catch (error) {
+      setState({ loading: false, links: [], error: error.message, created: null })
+    }
+  }
+
+  useEffect(() => {
+    loadLinks()
+  }, [])
+
+  async function createLink() {
+    setBusy(true)
+    setState((current) => ({ ...current, error: '', created: null }))
+    try {
+      const data = await callFunction('smart-add', { action: 'create-link' })
+      setState((current) => ({
+        ...current,
+        links: [data.link, ...current.links],
+        created: data.link,
+      }))
+    } catch (error) {
+      setState((current) => ({ ...current, error: error.message }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function copyLink(url) {
+    await navigator.clipboard?.writeText(url)
+    setState((current) => ({ ...current, error: 'Smart Add link copied.' }))
+  }
+
+  return (
+    <section className="dash-section">
+      <div className="dashboard-hero smart-add-hero">
+        <PageTitle
+          title="Smart Add"
+          subtitle="Create a secure mobile link for someone to scan product barcodes, capture product images and add stock into your store."
+        />
+        <button disabled={busy} type="button" onClick={createLink}>
+          {busy ? 'Creating...' : 'Create mobile link'}
+        </button>
+      </div>
+
+      {state.error ? <Notice tone={state.error.includes('copied') ? 'success' : 'warning'}>{state.error}</Notice> : null}
+      {state.created ? (
+        <Panel title="New Smart Add link">
+          <p className="smart-link">{state.created.url}</p>
+          <div className="action-row">
+            <button type="button" onClick={() => copyLink(state.created.url)}>
+              Copy link
+            </button>
+            <a className="secondary-action" href={`https://wa.me/?text=${encodeURIComponent(state.created.url)}`}>
+              Send on WhatsApp
+            </a>
+          </div>
+        </Panel>
+      ) : null}
+
+      <TwoColumn>
+        <Panel title="How it works">
+          <SimpleList
+            rows={[
+              { label: '1. Create link', value: 'Send to any phone' },
+              { label: '2. Scan barcode', value: 'Checks shared database' },
+              { label: '3. Capture product', value: 'Suggests name, size and category' },
+              { label: '4. Save item', value: 'Adds to inventory' },
+            ]}
+          />
+        </Panel>
+        <Panel title="Recent Smart Add links">
+          {state.loading ? (
+            <LoadingRows />
+          ) : state.links.length ? (
+            <div className="smart-link-list">
+              {state.links.map((link) => (
+                <div key={link.id}>
+                  <strong>{link.completed_count || 0} products added</strong>
+                  <span>{link.is_active ? 'Active' : 'Closed'} · {formatDateTime(link.created_at)}</span>
+                  <button type="button" onClick={() => copyLink(link.url)}>
+                    Copy
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState>No Smart Add links yet.</EmptyState>
+          )}
+        </Panel>
+      </TwoColumn>
+    </section>
+  )
+}
+
+function SmartAddPhone({ token }) {
+  const [state, setState] = useState({ loading: true, error: '', link: null })
+  const [barcode, setBarcode] = useState('')
+  const [form, setForm] = useState({
+    name: '',
+    category: '',
+    size: '',
+    sku: '',
+    price: '',
+    quantity: '1',
+    low_stock_threshold: '5',
+    labelText: '',
+    imageDataUrl: '',
+  })
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  const videoRef = useRef(null)
+  const scannerStopRef = useRef(null)
+
+  useEffect(() => {
+    async function loadLink() {
+      try {
+        const data = await callFunction('smart-add', { action: 'get-link', token }, false)
+        setState({ loading: false, error: '', link: data.link })
+      } catch (error) {
+        setState({ loading: false, error: error.message, link: null })
+      }
+    }
+
+    loadLink()
+
+    return () => {
+      scannerStopRef.current?.()
+    }
+  }, [token])
+
+  function update(field, value) {
+    setForm((current) => ({ ...current, [field]: value }))
+  }
+
+  function applySuggestions(text, nextBarcode = barcode) {
+    const name = smartNameFromText(text, nextBarcode)
+    const size = smartSizeFromText(text)
+    const category = smartCategoryFromText(text)
+
+    setForm((current) => ({
+      ...current,
+      labelText: text,
+      name: current.name || name,
+      size: current.size || size,
+      category: current.category || category,
+    }))
+  }
+
+  async function lookupBarcode(nextBarcode = barcode) {
+    const cleanBarcode = String(nextBarcode || '').trim()
+    if (!cleanBarcode) {
+      setMessage('Enter or scan a barcode first.')
+      return
+    }
+
+    setBarcode(cleanBarcode)
+    setMessage('Checking shared product database...')
+    try {
+      const data = await callFunction('smart-add', { action: 'lookup', token, barcode: cleanBarcode }, false)
+      if (data.product) {
+        setForm((current) => ({
+          ...current,
+          name: current.name || data.product.name || '',
+          category: current.category || data.product.category || '',
+          size: current.size || data.product.size || '',
+          imageDataUrl: current.imageDataUrl || data.product.image_url || '',
+        }))
+        setMessage('Product found in the shared database. Confirm stock details and save.')
+      } else {
+        setMessage('New barcode. Capture the product image or enter details manually.')
+      }
+    } catch (error) {
+      setMessage(error.message)
+    }
+  }
+
+  async function scanBarcode() {
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      setMessage('Camera scanning needs HTTPS or localhost. Use manual barcode entry on this device.')
+      return
+    }
+
+    setMessage('Opening camera...')
+    scannerStopRef.current?.()
+
+    try {
+      const constraints = {
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      }
+
+      if ('BarcodeDetector' in window) {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints)
+        const detector = new window.BarcodeDetector({
+          formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf'],
+        })
+        const video = videoRef.current
+        video.srcObject = stream
+        await video.play()
+
+        let stopped = false
+        async function scanFrame() {
+          if (stopped) return
+          const detected = await detector.detect(video).catch(() => [])
+          const rawValue = detected?.[0]?.rawValue
+          if (rawValue) {
+            stopped = true
+            stream.getTracks().forEach((track) => track.stop())
+            video.srcObject = null
+            await lookupBarcode(rawValue)
+            return
+          }
+          requestAnimationFrame(scanFrame)
+        }
+
+        scannerStopRef.current = () => {
+          stopped = true
+          stream.getTracks().forEach((track) => track.stop())
+          if (video) video.srcObject = null
+        }
+        scanFrame()
+        setMessage('Point at the barcode. It will fill automatically.')
+        return
+      }
+
+      const { BrowserMultiFormatReader } = await import('@zxing/browser')
+      const scanner = new BrowserMultiFormatReader()
+      const controls = await scanner.decodeFromConstraints(
+        constraints,
+        videoRef.current,
+        async (result) => {
+          const rawValue = result?.getText?.()
+          if (!rawValue) return
+          controls.stop()
+          scannerStopRef.current = null
+          await lookupBarcode(rawValue)
+        },
+      )
+      scannerStopRef.current = () => controls.stop()
+      setMessage('Point at the barcode. It will fill automatically.')
+    } catch (error) {
+      setMessage(error.message || 'Camera could not scan. Enter the barcode manually.')
+    }
+  }
+
+  async function handleImage(event) {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    setMessage('Reading product image...')
+    const [imageDataUrl, extractedText] = await Promise.all([
+      imageFileToDataUrl(file),
+      extractTextFromImage(file),
+    ])
+
+    setForm((current) => ({ ...current, imageDataUrl }))
+    if (extractedText) {
+      applySuggestions(extractedText)
+      setMessage('Image text detected. Review the suggested details before saving.')
+    } else {
+      setMessage('Image saved. Add the product name manually if your browser cannot read label text.')
+    }
+  }
+
+  async function saveProduct(event) {
+    event.preventDefault()
+    setBusy(true)
+    setMessage('')
+
+    try {
+      const data = await callFunction(
+        'smart-add',
+        {
+          action: 'save-item',
+          token,
+          product: {
+            barcode,
+            name: form.name,
+            category: form.category,
+            size: form.size,
+            sku: form.sku,
+            price: form.price,
+            quantity: form.quantity,
+            low_stock_threshold: form.low_stock_threshold,
+            image_url: form.imageDataUrl,
+            label_text: form.labelText,
+          },
+        },
+        false,
+      )
+
+      setMessage(`${data.product?.name || form.name} saved to store inventory.`)
+      setBarcode('')
+      setForm({
+        name: '',
+        category: '',
+        size: '',
+        sku: '',
+        price: '',
+        quantity: '1',
+        low_stock_threshold: '5',
+        labelText: '',
+        imageDataUrl: '',
+      })
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (state.loading) return <main className="smart-add-mobile"><LoadingRows /></main>
+  if (state.error) return <main className="smart-add-mobile"><Notice tone="error">{state.error}</Notice></main>
+
+  return (
+    <main className="smart-add-mobile">
+      <section className="smart-phone-card">
+        <p className="eyebrow">Smart Add</p>
+        <h1>{state.link?.store_name || 'Glide store'}</h1>
+        <p className="lead">Scan barcode, capture the product, confirm details, save.</p>
+
+        {message ? <Notice tone={message.includes('saved') || message.includes('found') ? 'success' : 'warning'}>{message}</Notice> : null}
+
+        <div className="smart-scanner">
+          <video ref={videoRef} muted playsInline />
+          <div className="action-row">
+            <button type="button" onClick={scanBarcode}>
+              Scan barcode
+            </button>
+          </div>
+        </div>
+
+        <form className="smart-product-form" onSubmit={saveProduct}>
+          <label>
+            Barcode
+            <div className="inline-input">
+              <input
+                required
+                inputMode="numeric"
+                value={barcode}
+                onChange={(event) => setBarcode(event.target.value)}
+                placeholder="Scan or enter barcode"
+              />
+              <button type="button" onClick={() => lookupBarcode()}>
+                Check
+              </button>
+            </div>
+          </label>
+          <label>
+            Product image
+            <input accept="image/*" capture="environment" type="file" onChange={handleImage} />
+          </label>
+          {form.imageDataUrl ? <img className="smart-product-photo" src={form.imageDataUrl} alt="Captured product" /> : null}
+          <label>
+            Label text or notes
+            <textarea
+              rows="3"
+              value={form.labelText}
+              onChange={(event) => {
+                update('labelText', event.target.value)
+                applySuggestions(event.target.value)
+              }}
+              placeholder="Type visible label text if image reading is unavailable"
+            />
+          </label>
+          <div className="form-grid smart-form-grid">
+            <label>
+              Product name
+              <input required value={form.name} onChange={(event) => update('name', event.target.value)} />
+            </label>
+            <label>
+              Category
+              <input value={form.category} onChange={(event) => update('category', event.target.value)} />
+            </label>
+            <label>
+              Size
+              <input value={form.size} onChange={(event) => update('size', event.target.value)} placeholder="500ml, 1kg" />
+            </label>
+            <label>
+              SKU
+              <input value={form.sku} onChange={(event) => update('sku', event.target.value)} />
+            </label>
+            <label>
+              Price
+              <input required min="0" step="0.01" type="number" value={form.price} onChange={(event) => update('price', event.target.value)} />
+            </label>
+            <label>
+              Quantity
+              <input min="0" type="number" value={form.quantity} onChange={(event) => update('quantity', event.target.value)} />
+            </label>
+            <label>
+              Low stock threshold
+              <input min="0" type="number" value={form.low_stock_threshold} onChange={(event) => update('low_stock_threshold', event.target.value)} />
+            </label>
+          </div>
+          <button disabled={busy} type="submit">
+            {busy ? 'Saving...' : 'Save product'}
+          </button>
+        </form>
+      </section>
+    </main>
+  )
+}
+
 function Products() {
   const pageSize = 100
   const [products, setProducts] = useState([])
@@ -800,6 +1296,9 @@ function Products() {
           <button type="button" onClick={openAddProduct}>
             Add product
           </button>
+          <Link className="primary-action" href="/dash/smart-add">
+            Smart Add
+          </Link>
           <Link className="secondary-action" href="/dash/import">
             Import CSV
           </Link>
@@ -872,8 +1371,17 @@ function Products() {
                 <tr key={product.id}>
                   <td>
                     <div className="product-cell">
-                      <strong>{product.name}</strong>
-                      <span>{product.category || 'Uncategorised'}</span>
+                      {product.image_url ? (
+                        <img src={product.image_url} alt="" />
+                      ) : (
+                        <span className="product-image-placeholder" />
+                      )}
+                      <div>
+                        <strong>{product.name}</strong>
+                        <span>
+                          {[product.category || 'Uncategorised', product.size].filter(Boolean).join(' · ')}
+                        </span>
+                      </div>
                     </div>
                   </td>
                   <td>
@@ -1129,10 +1637,14 @@ function ProductBarcodeModal({ product, onClose }) {
         <div className="barcode-preview">
           <svg ref={barcodeRef} aria-label={`${product.name} barcode`} />
         </div>
+        {product.image_url ? (
+          <img className="barcode-product-image" src={product.image_url} alt={product.name} />
+        ) : null}
         <SimpleList
           rows={[
             { label: 'Barcode', value: product.barcode },
             { label: 'SKU', value: product.sku || 'Not set' },
+            { label: 'Size', value: product.size || 'Not set' },
             { label: 'Price', value: formatMoney(product.price) },
           ]}
         />
@@ -1169,6 +1681,8 @@ function ProductForm({ product, onDone, onCancel }) {
       low_stock_threshold: Number(form.low_stock_threshold || 0),
       is_available: Boolean(form.is_available),
       track_inventory: Boolean(form.track_inventory),
+      size: form.size?.trim() || null,
+      image_url: form.image_url?.trim() || null,
     }
 
     const duplicate = await supabase
@@ -1226,6 +1740,22 @@ function ProductForm({ product, onDone, onCancel }) {
           <input
             value={form.category || ''}
             onChange={(event) => update('category', event.target.value)}
+          />
+        </label>
+        <label>
+          Size
+          <input
+            value={form.size || ''}
+            onChange={(event) => update('size', event.target.value)}
+            placeholder="500ml, 1kg, 12 pcs"
+          />
+        </label>
+        <label>
+          Image URL
+          <input
+            value={form.image_url || ''}
+            onChange={(event) => update('image_url', event.target.value)}
+            placeholder="Optional product image"
           />
         </label>
         <label>
