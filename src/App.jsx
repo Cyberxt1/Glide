@@ -184,6 +184,33 @@ function App() {
 }
 
 function Landing() {
+  useEffect(() => {
+    const animatedItems = document.querySelectorAll('.reveal-pop')
+
+    if (!animatedItems.length) return undefined
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !('IntersectionObserver' in window)) {
+      animatedItems.forEach((item) => item.classList.add('is-visible'))
+      return undefined
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-visible')
+            observer.unobserve(entry.target)
+          }
+        })
+      },
+      { rootMargin: '0px 0px -12% 0px', threshold: 0.18 },
+    )
+
+    animatedItems.forEach((item) => observer.observe(item))
+
+    return () => observer.disconnect()
+  }, [])
+
   return (
     <main className="landing-page">
       <nav className="landing-nav" aria-label="Main navigation">
@@ -196,17 +223,21 @@ function Landing() {
           <a href="#start">Start</a>
         </div>
         <div className="landing-nav-actions">
-          <Link href="/login">Login</Link>
-          <Link className="primary-action" href="/signup">
+          <Link className="secondary-action" href="/login">
+            Login
+          </Link>
+          <Link className="primary-action nav-signup-action" href="/signup">
             Start Free
           </Link>
         </div>
       </nav>
 
       <section className="landing-hero">
-        <div className="landing-hero-copy">
-          <p className="eyebrow">Retail operating system</p>
-          <h1>The operating system for modern retail.</h1>
+        <div className="landing-hero-copy reveal-pop">
+          {/* <p className="eyebrow">Retail operating system</p> */}
+          <h1>
+            The checkout <span className="hero-accent">experience</span> customers actually want.
+          </h1>
           <p className="lead">Manage inventory, payments, self-checkout and store operations from one platform.</p>
           <div className="action-row">
             <Link className="primary-action" href="/signup">
@@ -217,72 +248,75 @@ function Landing() {
             </Link>
           </div>
         </div>
-        <div className="landing-hero-mark" aria-hidden="true">
+        <div className="landing-hero-mark reveal-pop" aria-hidden="true">
           <img alt="" src={glideLogo} />
+          <span className="logo-badge logo-badge-one">Scan</span>
+          <span className="logo-badge logo-badge-two">Pay</span>
+          <span className="logo-badge logo-badge-three">Done</span>
         </div>
       </section>
 
-      <section className="landing-ribbon">
+      <section className="landing-ribbon reveal-pop">
         Built for supermarkets, pharmacies, convenience stores and modern retailers.
       </section>
 
-      <section className="landing-workflow" id="workflow">
+      <section className="landing-workflow reveal-pop" id="workflow">
         <p className="eyebrow">One workflow</p>
         <h2>Every part of your store, connected.</h2>
         <div className="workflow-track" aria-label="Glide workflow">
-          <span>Inventory</span>
-          <span>Products</span>
-          <span>QR Checkout</span>
-          <span>Payments</span>
-          <span>Orders</span>
-          <span>Receipts</span>
+          <span className="reveal-pop" style={{ '--reveal-delay': '80ms' }}>Inventory</span>
+          <span className="reveal-pop" style={{ '--reveal-delay': '130ms' }}>Products</span>
+          <span className="reveal-pop" style={{ '--reveal-delay': '180ms' }}>QR Checkout</span>
+          <span className="reveal-pop" style={{ '--reveal-delay': '230ms' }}>Payments</span>
+          <span className="reveal-pop" style={{ '--reveal-delay': '280ms' }}>Orders</span>
+          <span className="reveal-pop" style={{ '--reveal-delay': '330ms' }}>Receipts</span>
         </div>
       </section>
 
-      <section className="landing-sticky-story" id="why-glide">
-        <div className="sticky-copy">
+      <section className="landing-sticky-story reveal-pop" id="why-glide">
+        <div className="sticky-copy reveal-pop">
           <p className="eyebrow">Why Glide</p>
-          <h2>Six things, done properly.</h2>
+          <h2>You need</h2>
         </div>
         <div className="sticky-list">
-          <article>
+          <article className="reveal-pop">
             <span>01</span>
             <h3>Modern checkout.</h3>
           </article>
-          <article>
+          <article className="reveal-pop">
             <span>02</span>
             <h3>Live inventory.</h3>
           </article>
-          <article>
+          <article className="reveal-pop">
             <span>03</span>
             <h3>Fast payments.</h3>
           </article>
-          <article>
+          <article className="reveal-pop">
             <span>04</span>
             <h3>Digital receipts.</h3>
           </article>
-          <article>
+          <article className="reveal-pop">
             <span>05</span>
             <h3>Store analytics.</h3>
           </article>
-          <article>
+          <article className="reveal-pop">
             <span>06</span>
             <h3>Built for physical retail.</h3>
           </article>
         </div>
       </section>
 
-      <section className="landing-audiences">
-        <div>
+      <section className="landing-audiences reveal-pop">
+        <div className="reveal-pop">
           <p className="eyebrow">For merchants</p>
-          <h2>Run the store.</h2>
+          <h2>Own the store.</h2>
           <ul>
             <li>Manage products</li>
             <li>Track inventory</li>
             <li>Monitor orders</li>
           </ul>
         </div>
-        <div>
+        <div className="reveal-pop">
           <p className="eyebrow">For customers</p>
           <h2>Move faster.</h2>
           <ul>
@@ -293,9 +327,9 @@ function Landing() {
         </div>
       </section>
 
-      <section className="landing-close" id="start">
-        <h2>Run your store with Glide.</h2>
-        <p>Everything your store needs.</p>
+      <section className="landing-close reveal-pop" id="start">
+        <h2>Optimize your store with Glide.</h2>
+        <p>Your store is not the products, but your customers.</p>
         <Link className="primary-action" href="/signup">
           Start Free
         </Link>
