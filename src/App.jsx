@@ -1313,21 +1313,6 @@ function Login() {
   return (
     <main className="auth-page">
       <section className="auth-shell">
-        <aside className="auth-story">
-          <Link className="brand" href="/">
-            Glide
-          </Link>
-          <div>
-            <p className="eyebrow">Store operations</p>
-            <h1>Welcome back to your checkout command center.</h1>
-            <p>Open the live dashboard, manage products, review paid orders and keep the exit flow moving.</p>
-          </div>
-          <div className="auth-proof">
-            <span>Live stock</span>
-            <span>Smart Add</span>
-            <span>Receipt verify</span>
-          </div>
-        </aside>
         <form className="auth-panel" onSubmit={submit}>
           <p className="eyebrow">Merchant login</p>
           <h2>Sign in</h2>
@@ -1479,26 +1464,10 @@ function Signup() {
 
   return (
     <main className="auth-page">
-      <section className="auth-shell signup-auth-shell">
-        <aside className="auth-story">
-          <Link className="brand" href="/">
-            Glide
-          </Link>
-          <div>
-            <p className="eyebrow">Start selling smarter</p>
-            <h1>Create the store account first. Build the branch next.</h1>
-            <p>After signup you will create the store profile, branch and active checkout QR.</p>
-          </div>
-          <div className="auth-proof">
-            <span>One store profile</span>
-            <span>Active QR</span>
-            <span>Staff ready</span>
-          </div>
-        </aside>
+      <section className="auth-shell">
         <form className="auth-panel" onSubmit={submit}>
           <p className="eyebrow">Merchant signup</p>
-          <h2>Create account</h2>
-          <p>Set up the owner login for your store.</p>
+          <h2>Welcome to Glide</h2>
           {message ? <Notice tone="warning">{message}</Notice> : null}
           <label>
             Email

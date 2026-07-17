@@ -680,13 +680,11 @@ button:disabled {
 }
 
 .auth-shell {
-  width: min(1080px, 100%);
-  min-height: min(720px, calc(100svh - 48px));
-  display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.82fr);
-  overflow: hidden;
+  width: min(460px, 100%);
+  display: flex;
+  justify-content: center;
   border: 1px solid rgba(20, 35, 30, 0.1);
-  border-radius: 24px;
+  border-radius: 18px;
   background: #fffaf0;
   box-shadow: 0 28px 80px rgba(20, 35, 30, 0.14);
 }
@@ -758,7 +756,6 @@ button:disabled {
 
 .auth-shell .auth-panel {
   width: 100%;
-  align-self: center;
   padding: clamp(28px, 5vw, 52px);
   border: 0;
   background: #fffaf0;
@@ -2998,16 +2995,7 @@ td a {
 
 @media (max-width: 980px) {
   .auth-shell {
-    grid-template-columns: 1fr;
-    min-height: 0;
-  }
-
-  .auth-story {
-    min-height: 340px;
-  }
-
-  .auth-story h1 {
-    font-size: clamp(34px, 10vw, 52px);
+    width: min(460px, 100%);
   }
 
   .admin-console {
