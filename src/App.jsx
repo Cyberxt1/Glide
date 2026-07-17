@@ -3,7 +3,7 @@ import Papa from 'papaparse'
 import QRCode from 'qrcode'
 import './App.css'
 import glideLogo from './assets/logo.png'
-import { callFunction } from './lib/api'
+import { SESSION_EXPIRED_MESSAGE, callFunction } from './lib/api'
 import { formatDateTime, formatMoney } from './lib/format'
 import { getConfigMessage, isSupabaseConfigured, supabase } from './lib/supabase'
 
@@ -1312,38 +1312,55 @@ function Login() {
 
   return (
     <main className="auth-page">
-      <form className="auth-panel" onSubmit={submit}>
-        <Link className="brand" href="/">
-          Glide
-        </Link>
-        <h1>Merchant login</h1>
-        <p>Manage the active store pilot.</p>
-        {message ? <Notice tone="warning">{message}</Notice> : null}
-        <label>
-          Email
-          <input
-            required
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-          />
-        </label>
-        <label>
-          Password
-          <input
-            required
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-        </label>
-        <button disabled={busy || !isSupabaseConfigured} type="submit">
-          {busy ? 'Signing in...' : 'Log in'}
-        </button>
-        <p className="auth-switch">
-          New to Glide? <Link href="/signup">Create a store account.</Link>
-        </p>
-      </form>
+      <section className="auth-shell">
+        <aside className="auth-story">
+          <Link className="brand" href="/">
+            Glide
+          </Link>
+          <div>
+            <p className="eyebrow">Store operations</p>
+            <h1>Welcome back to your checkout command center.</h1>
+            <p>Open the live dashboard, manage products, review paid orders and keep the exit flow moving.</p>
+          </div>
+          <div className="auth-proof">
+            <span>Live stock</span>
+            <span>Smart Add</span>
+            <span>Receipt verify</span>
+          </div>
+        </aside>
+        <form className="auth-panel" onSubmit={submit}>
+          <p className="eyebrow">Merchant login</p>
+          <h2>Sign in</h2>
+          <p>Use your store owner account to continue.</p>
+          {message ? <Notice tone="warning">{message}</Notice> : null}
+          <label>
+            Email
+            <input
+              required
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+          </label>
+          <label>
+            Password
+            <input
+              required
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </label>
+          <button disabled={busy || !isSupabaseConfigured} type="submit">
+            {busy ? 'Signing in...' : 'Log in'}
+          </button>
+          <p className="auth-switch">
+            New to Glide? <Link href="/signup">Create a store account.</Link>
+          </p>
+        </form>
+      </section>
     </main>
   )
 }
@@ -1462,49 +1479,67 @@ function Signup() {
 
   return (
     <main className="auth-page">
-      <form className="auth-panel" onSubmit={submit}>
-        <Link className="brand" href="/">
-          Glide
-        </Link>
-        <h1>Create account</h1>
-        <p>Sign up first, then create your store.</p>
-        {message ? <Notice tone="warning">{message}</Notice> : null}
-        <label>
-          Email
-          <input
-            required
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-          />
-        </label>
-        <label>
-          Password
-          <input
-            required
-            minLength={6}
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-        </label>
-        <label>
-          Confirm password
-          <input
-            required
-            minLength={6}
-            type="password"
-            value={confirmPassword}
-            onChange={(event) => setConfirmPassword(event.target.value)}
-          />
-        </label>
-        <button disabled={busy || !isSupabaseConfigured} type="submit">
-          {busy ? 'Creating account...' : 'Create account'}
-        </button>
-        <p className="auth-switch">
-          Already have an account? <Link href="/login">Log in.</Link>
-        </p>
-      </form>
+      <section className="auth-shell signup-auth-shell">
+        <aside className="auth-story">
+          <Link className="brand" href="/">
+            Glide
+          </Link>
+          <div>
+            <p className="eyebrow">Start selling smarter</p>
+            <h1>Create the store account first. Build the branch next.</h1>
+            <p>After signup you will create the store profile, branch and active checkout QR.</p>
+          </div>
+          <div className="auth-proof">
+            <span>One store profile</span>
+            <span>Active QR</span>
+            <span>Staff ready</span>
+          </div>
+        </aside>
+        <form className="auth-panel" onSubmit={submit}>
+          <p className="eyebrow">Merchant signup</p>
+          <h2>Create account</h2>
+          <p>Set up the owner login for your store.</p>
+          {message ? <Notice tone="warning">{message}</Notice> : null}
+          <label>
+            Email
+            <input
+              required
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+          </label>
+          <label>
+            Password
+            <input
+              required
+              minLength={6}
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </label>
+          <label>
+            Confirm password
+            <input
+              required
+              minLength={6}
+              type="password"
+              autoComplete="new-password"
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+            />
+          </label>
+          <button disabled={busy || !isSupabaseConfigured} type="submit">
+            {busy ? 'Creating account...' : 'Create account'}
+          </button>
+          <p className="auth-switch">
+            Already have an account? <Link href="/login">Log in.</Link>
+          </p>
+        </form>
+      </section>
     </main>
   )
 }
@@ -1679,19 +1714,47 @@ function Dashboard() {
     averageOrderValue: 0,
     recentOrders: [],
     topProducts: [],
+    storeName: '',
+    branchName: '',
     ...(state.data || {}),
   }
 
   data.recentOrders = Array.isArray(data.recentOrders) ? data.recentOrders : []
   data.topProducts = Array.isArray(data.topProducts) ? data.topProducts : []
+  const stockHealth = data.lowStockCount
+    ? `${data.lowStockCount} needs restock`
+    : 'Healthy'
+  const exitHealth = data.pendingPaidOrders
+    ? `${data.pendingPaidOrders} waiting`
+    : 'Clear'
 
   return (
     <section className="dash-section">
-      <div className="dashboard-hero">
-        <PageTitle title="Store dashboard" subtitle="Operational view for one active store." />
-        <div className="dashboard-status">
-          <span>Today</span>
-          <strong>{formatMoney(data.todayRevenue)}</strong>
+      <div className="dashboard-command">
+        <div className="dashboard-hero">
+          <PageTitle
+            title={data.storeName || 'Store dashboard'}
+            subtitle={`${data.branchName ? `${data.branchName} - ` : ''}Store dashboard for live activity, stock risk and exit readiness.`}
+          />
+          <div className="dashboard-status">
+            <span>Today revenue</span>
+            <strong>{formatMoney(data.todayRevenue)}</strong>
+            <small>{data.todayPaidOrders} paid orders</small>
+          </div>
+        </div>
+        <div className="ops-strip" aria-label="Store health">
+          <div>
+            <span>Stock health</span>
+            <strong>{stockHealth}</strong>
+          </div>
+          <div>
+            <span>Exit queue</span>
+            <strong>{exitHealth}</strong>
+          </div>
+          <div>
+            <span>Average basket</span>
+            <strong>{formatMoney(data.averageOrderValue)}</strong>
+          </div>
         </div>
       </div>
       {state.loading ? (
@@ -1705,13 +1768,12 @@ function Dashboard() {
             </Notice>
           ) : null}
           <div className="metric-grid">
-            <Metric label="Total products" value={data.totalProducts} />
-            <Metric label="Low stock products" value={data.lowStockCount} />
-            <Metric label="Today's orders" value={data.todayPaidOrders} />
-            <Metric label="Today's revenue" value={formatMoney(data.todayRevenue)} />
-            <Metric label="Pending paid orders" value={data.pendingPaidOrders} />
+            <Metric label="Products live" value={data.totalProducts} />
+            <Metric label="Low stock" value={data.lowStockCount} />
+            <Metric label="Paid orders today" value={data.todayPaidOrders} />
+            <Metric label="Revenue today" value={formatMoney(data.todayRevenue)} />
+            <Metric label="Awaiting exit" value={data.pendingPaidOrders} />
             <Metric label="Completed exits" value={data.completedExits} />
-            <Metric label="Average order value" value={formatMoney(data.averageOrderValue)} />
           </div>
 
           <div className="quick-actions">
@@ -1729,6 +1791,9 @@ function Dashboard() {
             </Link>
             <Link href="/dash/verify" className="secondary-action">
               Open receipt verifier
+            </Link>
+            <Link href="/dash/orders" className="secondary-action">
+              Review orders
             </Link>
           </div>
 
@@ -1772,6 +1837,7 @@ async function loadDashboardSummaryFromClient() {
     exitedResult,
     recentOrdersResult,
     paidOrdersWithItemsResult,
+    profileResult,
   ] = await Promise.all([
     supabase
       .from('products')
@@ -1798,6 +1864,10 @@ async function loadDashboardSummaryFromClient() {
       .from('orders')
       .select('payment_status,order_items(product_name,quantity)')
       .eq('payment_status', 'paid'),
+    supabase
+      .from('merchant_profile')
+      .select('store_name,branch_name')
+      .maybeSingle(),
   ])
 
   const firstError = [
@@ -1807,6 +1877,7 @@ async function loadDashboardSummaryFromClient() {
     exitedResult.error,
     recentOrdersResult.error,
     paidOrdersWithItemsResult.error,
+    profileResult.error,
   ].find(Boolean)
 
   if (firstError) throw firstError
@@ -1826,6 +1897,8 @@ async function loadDashboardSummaryFromClient() {
   }
 
   return {
+    storeName: profileResult.data?.store_name || '',
+    branchName: profileResult.data?.branch_name || '',
     totalProducts: productRows.length,
     lowStockCount: productRows.filter(
       (product) => product.track_inventory && product.quantity <= product.low_stock_threshold,
@@ -1881,6 +1954,20 @@ function cleanBarcodeText(value) {
   return String(value ?? '').trim().replace(/\s+/g, '')
 }
 
+function smartAddErrorMessage(error) {
+  const message = String(error?.message || '').trim()
+  if (!message) return 'Smart Add could not load. Please try again.'
+  if (message === SESSION_EXPIRED_MESSAGE) return message
+  if (
+    message.toLowerCase() === 'something went wrong. please try again.' ||
+    message.toLowerCase() === 'failed to fetch' ||
+    message.toLowerCase().includes('networkerror')
+  ) {
+    return 'Smart Add could not load. Please try again.'
+  }
+  return message
+}
+
 function SmartAddDashboard() {
   const [state, setState] = useState({ loading: true, links: [], error: '', created: null })
   const [busy, setBusy] = useState(false)
@@ -1891,7 +1978,7 @@ function SmartAddDashboard() {
       const data = await callFunction('smart-add', { action: 'list-links' })
       setState({ loading: false, links: data.links || [], error: '', created: null })
     } catch (error) {
-      setState({ loading: false, links: [], error: error.message, created: null })
+      setState({ loading: false, links: [], error: smartAddErrorMessage(error), created: null })
     }
   }, [])
 
@@ -1916,7 +2003,7 @@ function SmartAddDashboard() {
         created: data.link,
       }))
     } catch (error) {
-      setState((current) => ({ ...current, error: error.message }))
+      setState((current) => ({ ...current, error: smartAddErrorMessage(error) }))
     } finally {
       setBusy(false)
     }
@@ -1959,7 +2046,7 @@ function SmartAddDashboard() {
           <SimpleList
             rows={[
               { label: '1. Create link', value: 'Send to any phone' },
-              { label: '2. Scan barcode', value: 'Checks shared database' },
+              { label: '2. Camera reads barcode', value: 'Checks shared database' },
               { label: '3. Add details', value: 'Suggests size and category' },
               { label: '4. Save item', value: 'Adds to inventory' },
             ]}
@@ -2006,6 +2093,7 @@ function SmartAddPhone({ token }) {
   const [busy, setBusy] = useState(false)
   const videoRef = useRef(null)
   const scannerStopRef = useRef(null)
+  const autoScanRef = useRef(false)
 
   useEffect(() => {
     async function loadLink() {
@@ -2013,7 +2101,7 @@ function SmartAddPhone({ token }) {
         const data = await callFunction('smart-add', { action: 'get-link', token }, false)
         setState({ loading: false, error: '', link: data.link })
       } catch (error) {
-        setState({ loading: false, error: error.message, link: null })
+        setState({ loading: false, error: smartAddErrorMessage(error), link: null })
       }
     }
 
@@ -2065,7 +2153,7 @@ function SmartAddPhone({ token }) {
         setMessage('New barcode. Enter the product details and save.')
       }
     } catch (error) {
-      setMessage(error.message)
+      setMessage(smartAddErrorMessage(error))
     }
   }
 
@@ -2138,9 +2226,16 @@ function SmartAddPhone({ token }) {
       scannerStopRef.current = () => controls.stop()
       setMessage('Point at the barcode. It will fill automatically.')
     } catch (error) {
-      setMessage(error.message || 'Camera could not scan. Enter the barcode manually.')
+      setMessage(smartAddErrorMessage(error) || 'Camera could not scan. Enter the barcode manually.')
     }
   }
+
+  useEffect(() => {
+    if (state.loading || state.error || autoScanRef.current) return
+    autoScanRef.current = true
+    scanBarcode()
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.loading, state.error])
 
   async function saveProduct(event) {
     event.preventDefault()
@@ -2181,7 +2276,7 @@ function SmartAddPhone({ token }) {
         labelText: '',
       })
     } catch (error) {
-      setMessage(error.message)
+      setMessage(smartAddErrorMessage(error))
     } finally {
       setBusy(false)
     }
@@ -2195,7 +2290,7 @@ function SmartAddPhone({ token }) {
       <section className="smart-phone-card">
         <p className="eyebrow">Smart Add</p>
         <h1>{state.link?.store_name || 'Glide store'}</h1>
-        <p className="lead">Scan barcode, enter the product details, save.</p>
+        <p className="lead">Camera opens automatically. Add product details, then save.</p>
 
         {message ? <Notice tone={message.includes('saved') || message.includes('found') ? 'success' : 'warning'}>{message}</Notice> : null}
 
@@ -2203,7 +2298,7 @@ function SmartAddPhone({ token }) {
           <video ref={videoRef} muted playsInline />
           <div className="action-row">
             <button type="button" onClick={scanBarcode}>
-              Scan barcode
+              Restart camera
             </button>
           </div>
         </div>
@@ -2278,7 +2373,7 @@ function SmartAddPhone({ token }) {
 function CategoryPicker({ value, onChange, open, onOpenChange, disabled = false }) {
   const [customValue, setCustomValue] = useState('')
 
-  function useCustomCategory() {
+  function chooseCustomCategory() {
     const nextValue = customValue.trim()
     if (!nextValue) return
     onChange(nextValue)
@@ -2303,11 +2398,11 @@ function CategoryPicker({ value, onChange, open, onOpenChange, disabled = false 
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
                   event.preventDefault()
-                  useCustomCategory()
+                  chooseCustomCategory()
                 }
               }}
             />
-            <button type="button" onClick={useCustomCategory}>
+            <button type="button" onClick={chooseCustomCategory}>
               Use
             </button>
           </div>
@@ -2340,6 +2435,7 @@ function ProductIntakePhone({ token }) {
   const [busy, setBusy] = useState(false)
   const videoRef = useRef(null)
   const scannerStopRef = useRef(null)
+  const autoScanRef = useRef(false)
 
   useEffect(() => {
     async function loadLink() {
@@ -2471,6 +2567,13 @@ function ProductIntakePhone({ token }) {
     }
   }
 
+  useEffect(() => {
+    if (state.loading || state.error || autoScanRef.current) return
+    autoScanRef.current = true
+    scanBarcode()
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.loading, state.error])
+
   async function saveProduct(event) {
     event.preventDefault()
     setBusy(true)
@@ -2524,7 +2627,7 @@ function ProductIntakePhone({ token }) {
         <div className="smart-scanner">
           <video ref={videoRef} muted playsInline />
           <button type="button" onClick={scanBarcode}>
-            Scan barcode
+            Restart camera
           </button>
           <small>Leading zeroes are kept exactly as scanned.</small>
         </div>
@@ -3702,6 +3805,7 @@ function CustomerCheckout({ qrCode }) {
   const [cameraState, setCameraState] = useState('idle')
   const [addToast, setAddToast] = useState(null)
   const [scanResult, setScanResult] = useState(null)
+  const [pendingScan, setPendingScan] = useState(null)
   const videoRef = useRef(null)
   const toastTimerRef = useRef(null)
   const idleTimerRef = useRef(null)
@@ -3713,10 +3817,10 @@ function CustomerCheckout({ qrCode }) {
   const cartRef = useRef(cart)
   const scannerControlsRef = useRef(null)
   const scannerReaderRef = useRef(null)
-  const scanArmedRef = useRef(false)
   const scanProcessingRef = useRef(false)
   const lastDetectedRef = useRef({ code: '', time: 0 })
   const latestVisibleBarcodeRef = useRef({ code: '', time: 0 })
+  const pendingScanRef = useRef(null)
   const autoCameraTriedRef = useRef(false)
   const sessionStorageKey = `glide:checkout:${qrCode}:session`
   const cartStorageKey = `glide:checkout:${qrCode}:cart`
@@ -3919,30 +4023,23 @@ function CustomerCheckout({ qrCode }) {
     }
 
     const existing = cartRef.current.find((item) => item.id === data.id)
-    const nextQuantity = (existing?.cartQuantity || 0) + 1
-    if (data.track_inventory && nextQuantity > data.quantity) {
+    const suggestedQuantity = (existing?.cartQuantity || 0) + 1
+    if (data.track_inventory && suggestedQuantity > data.quantity) {
       setMessage('This item is out of stock.')
       setScanResult({ status: 'blocked', code, label: 'Out of stock' })
       return false
     }
 
-    setCart((current) =>
-      existing
-        ? current.map((item) =>
-            item.id === data.id ? { ...item, cartQuantity: nextQuantity } : item,
-          )
-        : [...current, { ...data, cartQuantity: 1 }],
-    )
-    setAddToast({
-      name: data.name,
-      price: data.price,
-    })
-    setScanResult({ status: 'added', code, label: data.name })
+    const nextPendingScan = {
+      product: data,
+      quantity: Math.max(1, suggestedQuantity),
+      existingQuantity: existing?.cartQuantity || 0,
+      source,
+    }
+    pendingScanRef.current = nextPendingScan
+    setPendingScan(nextPendingScan)
+    setScanResult({ status: 'ready', code, label: data.name })
     playScanSound()
-    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-    toastTimerRef.current = window.setTimeout(() => {
-      setAddToast(null)
-    }, 1800)
     setBarcode('')
     return true
   }
@@ -3954,19 +4051,26 @@ function CustomerCheckout({ qrCode }) {
 
       const audioContext = audioContextRef.current || new AudioContext()
       audioContextRef.current = audioContext
-      const oscillator = audioContext.createOscillator()
+      const first = audioContext.createOscillator()
+      const second = audioContext.createOscillator()
       const gain = audioContext.createGain()
 
-      oscillator.type = 'sine'
-      oscillator.frequency.setValueAtTime(880, audioContext.currentTime)
-      oscillator.frequency.exponentialRampToValueAtTime(1320, audioContext.currentTime + 0.08)
+      first.type = 'sine'
+      second.type = 'triangle'
+      first.frequency.setValueAtTime(1046.5, audioContext.currentTime)
+      first.frequency.exponentialRampToValueAtTime(1568, audioContext.currentTime + 0.09)
+      second.frequency.setValueAtTime(1318.5, audioContext.currentTime + 0.04)
+      second.frequency.exponentialRampToValueAtTime(2093, audioContext.currentTime + 0.16)
       gain.gain.setValueAtTime(0.001, audioContext.currentTime)
-      gain.gain.exponentialRampToValueAtTime(0.18, audioContext.currentTime + 0.01)
-      gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.14)
-      oscillator.connect(gain)
+      gain.gain.exponentialRampToValueAtTime(0.34, audioContext.currentTime + 0.018)
+      gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.28)
+      first.connect(gain)
+      second.connect(gain)
       gain.connect(audioContext.destination)
-      oscillator.start()
-      oscillator.stop(audioContext.currentTime + 0.15)
+      first.start(audioContext.currentTime)
+      second.start(audioContext.currentTime + 0.035)
+      first.stop(audioContext.currentTime + 0.18)
+      second.stop(audioContext.currentTime + 0.28)
     } catch {
       // Audio feedback is optional; scanning must keep working if audio is blocked.
     }
@@ -3981,11 +4085,11 @@ function CustomerCheckout({ qrCode }) {
     latestVisibleBarcodeRef.current = { code: exactCode, time: now }
 
     if (
-      !scanArmedRef.current &&
       !scanProcessingRef.current &&
+      !pendingScanRef.current &&
       (previous.code !== exactCode || now - previous.time > 1500)
     ) {
-      setScanResult({ status: 'ready', code: exactCode, label: 'Barcode detected. Tap Scan.' })
+      setScanResult({ status: 'ready', code: exactCode, label: 'Barcode detected' })
     }
 
     return exactCode
@@ -3996,14 +4100,13 @@ function CustomerCheckout({ qrCode }) {
     const now = Date.now()
     if (
       !exactCode ||
-      !scanArmedRef.current ||
+      pendingScanRef.current ||
       scanProcessingRef.current ||
-      (lastDetectedRef.current.code === exactCode && now - lastDetectedRef.current.time <= 1200)
+      (lastDetectedRef.current.code === exactCode && now - lastDetectedRef.current.time <= 3500)
     ) {
       return
     }
 
-    scanArmedRef.current = false
     scanProcessingRef.current = true
     lastDetectedRef.current = { code: exactCode, time: now }
     setScanResult({ status: 'reading', code: exactCode, label: 'Reading barcode' })
@@ -4032,6 +4135,55 @@ function CustomerCheckout({ qrCode }) {
         })
         .filter((item) => item.cartQuantity > 0),
     )
+  }
+
+  function setPendingScanQuantity(nextQuantity) {
+    setPendingScan((current) => {
+      if (!current) return current
+      const maxQuantity = current.product.track_inventory ? Number(current.product.quantity) : Infinity
+      const cleanQuantity = Math.max(1, Math.min(maxQuantity, Number(nextQuantity) || 1))
+      const updated = { ...current, quantity: cleanQuantity }
+      pendingScanRef.current = updated
+      return updated
+    })
+  }
+
+  function closePendingScan() {
+    pendingScanRef.current = null
+    setPendingScan(null)
+    setScanResult((current) =>
+      current?.status === 'ready'
+        ? { status: 'ready', code: '', label: 'Camera ready. Point at a barcode.' }
+        : current,
+    )
+  }
+
+  function confirmPendingScan() {
+    const currentScan = pendingScanRef.current
+    if (!currentScan) return
+
+    const { product, quantity } = currentScan
+    noteActivity()
+    setCart((current) => {
+      const exists = current.some((item) => item.id === product.id)
+      return exists
+        ? current.map((item) =>
+            item.id === product.id ? { ...item, cartQuantity: quantity } : item,
+          )
+        : [...current, { ...product, cartQuantity: quantity }]
+    })
+    setAddToast({
+      name: product.name,
+      price: product.price,
+      quantity,
+    })
+    setScanResult({ status: 'added', code: product.barcode, label: product.name })
+    pendingScanRef.current = null
+    setPendingScan(null)
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = window.setTimeout(() => {
+      setAddToast(null)
+    }, 1800)
   }
 
   const total = cart.reduce((sum, item) => sum + item.price * item.cartQuantity, 0)
@@ -4075,7 +4227,7 @@ function CustomerCheckout({ qrCode }) {
           const exactCode = detected?.[0]?.rawValue
           if (exactCode) {
             observeDetectedBarcode(exactCode)
-            if (scanArmedRef.current) await processDetectedBarcode(exactCode, 'camera')
+            await processDetectedBarcode(exactCode, 'camera')
           }
         }
       } catch {
@@ -4153,7 +4305,7 @@ function CustomerCheckout({ qrCode }) {
         setScanResult((current) =>
           current?.status === 'reading'
             ? current
-            : { status: 'ready', code: '', label: 'Camera ready. Point at a barcode, then tap Scan.' },
+            : { status: 'ready', code: '', label: 'Camera ready. Point at a barcode.' },
         )
         return
       }
@@ -4179,7 +4331,7 @@ function CustomerCheckout({ qrCode }) {
         videoRef.current,
         async (result) => {
           const exactCode = observeDetectedBarcode(result?.getText?.())
-          if (scanArmedRef.current) await processDetectedBarcode(exactCode, 'camera')
+          await processDetectedBarcode(exactCode, 'camera')
         },
       )
 
@@ -4187,7 +4339,7 @@ function CustomerCheckout({ qrCode }) {
       setScanResult((current) =>
         current?.status === 'reading'
           ? current
-          : { status: 'ready', code: '', label: 'Camera ready. Point at a barcode, then tap Scan.' },
+          : { status: 'ready', code: '', label: 'Camera ready. Point at a barcode.' },
       )
     } catch (error) {
       setCameraState('blocked')
@@ -4199,24 +4351,7 @@ function CustomerCheckout({ qrCode }) {
     }
   }
 
-  async function armScanner() {
-    noteActivity(true)
-    setMessage('')
-    scanArmedRef.current = true
-    setScanResult({ status: 'reading', code: '', label: 'Looking for barcode' })
-
-    if (cameraState !== 'scanning') {
-      await startCamera()
-    }
-
-    const latest = latestVisibleBarcodeRef.current
-    if (latest.code && Date.now() - latest.time <= 3500) {
-      await processDetectedBarcode(latest.code, 'camera')
-    }
-  }
-
   function stopCamera() {
-    scanArmedRef.current = false
     nativeScanStopRef.current?.()
     nativeScanStopRef.current = null
     scannerControlsRef.current?.stop()
@@ -4439,7 +4574,58 @@ function CustomerCheckout({ qrCode }) {
         <div className="added-toast" role="status">
           <span>Added to cart</span>
           <strong>{addToast.name}</strong>
-          <small>{formatMoney(addToast.price)}</small>
+          <small>{addToast.quantity} x {formatMoney(addToast.price)}</small>
+        </div>
+      ) : null}
+
+      {pendingScan ? (
+        <div
+          className="scan-popup-backdrop"
+          role="dialog"
+          aria-modal="true"
+          onClick={closePendingScan}
+        >
+          <section className="scan-popup" onClick={(event) => event.stopPropagation()}>
+            <div className="scan-popup-product">
+              <div className="product-thumb" aria-hidden="true">
+                {productInitials(pendingScan.product.name)}
+              </div>
+              <div>
+                <span>{pendingScan.existingQuantity ? 'Already in cart' : 'Product scanned'}</span>
+                <strong>{pendingScan.product.name}</strong>
+                <small>{pendingScan.product.barcode}</small>
+              </div>
+            </div>
+            <div className="scan-popup-price">
+              <span>{formatMoney(pendingScan.product.price)} each</span>
+              <strong>{formatMoney(pendingScan.product.price * pendingScan.quantity)}</strong>
+            </div>
+            <div className="scan-popup-stepper" aria-label="Quantity">
+              <button type="button" onClick={() => setPendingScanQuantity(pendingScan.quantity - 1)}>
+                -
+              </button>
+              <input
+                inputMode="numeric"
+                value={pendingScan.quantity}
+                onChange={(event) => setPendingScanQuantity(event.target.value)}
+                aria-label="Quantity"
+              />
+              <button type="button" onClick={() => setPendingScanQuantity(pendingScan.quantity + 1)}>
+                +
+              </button>
+            </div>
+            {pendingScan.product.track_inventory ? (
+              <small className="scan-popup-stock">{pendingScan.product.quantity} available</small>
+            ) : null}
+            <div className="scan-popup-actions">
+              <button type="button" onClick={closePendingScan}>
+                Cancel
+              </button>
+              <button type="button" onClick={confirmPendingScan}>
+                Add to cart
+              </button>
+            </div>
+          </section>
         </div>
       ) : null}
 
@@ -4456,17 +4642,10 @@ function CustomerCheckout({ qrCode }) {
               {cameraState === 'requesting'
                 ? 'Allow camera access in your browser'
                 : cameraState === 'scanning'
-                  ? 'Point at barcode, then tap Scan'
-                  : 'Tap Scan below'}
+                  ? 'Point at a barcode'
+                  : 'Camera starts automatically'}
             </p>
           </div>
-          <button
-            className="scan-action-button"
-            type="button"
-            onClick={armScanner}
-          >
-            {scanResult?.status === 'reading' ? 'Scanning...' : 'Scan'}
-          </button>
           {scanResult ? (
             <div className={`scan-result ${scanResult.status}`} role="status">
               <span>

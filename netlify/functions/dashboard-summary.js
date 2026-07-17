@@ -69,6 +69,8 @@ export async function handler(event) {
       .slice(0, 5)
 
     return json(200, {
+      storeName: merchant.store_name,
+      branchName: merchant.branch_name,
       totalProducts: productRows.length,
       lowStockCount: productRows.filter(
         (product) =>
