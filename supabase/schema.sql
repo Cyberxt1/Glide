@@ -5,6 +5,7 @@ create table if not exists public.merchant_profile (
   user_id uuid not null unique references auth.users(id) on delete cascade,
   store_name text not null default 'Glide Store',
   branch_name text not null default 'Main branch',
+  terminal_auth_code text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -17,6 +18,7 @@ create table if not exists public.staff_members (
   full_name text,
   role text not null default 'cashier' check (role in ('cashier')),
   is_active boolean not null default true,
+  terminal_auth_code text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (merchant_id, email)

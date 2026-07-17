@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "typecheck": "node --check netlify/functions/_supabase.js && node --check netlify/functions/create-order.js && node --check netlify/functions/verify-payment.js && node --check netlify/functions/dashboard-summary.js && node --check netlify/functions/create-staff-user.js && node --check netlify/functions/cashier-create-order.js && node --check netlify/functions/save-receipt-email.js && node --check netlify/functions/save-shopper-signup.js && node --check netlify/functions/shopper-session.js && node --check netlify/functions/smart-add.js && node --check netlify/functions/platform-admin.js && node --check netlify/functions/product-intake.js",
+    "typecheck": "node --check netlify/functions/_supabase.js && node --check netlify/functions/create-order.js && node --check netlify/functions/verify-payment.js && node --check netlify/functions/dashboard-summary.js && node --check netlify/functions/create-staff-user.js && node --check netlify/functions/cashier-create-order.js && node --check netlify/functions/cashier-terminal.js && node --check netlify/functions/save-receipt-email.js && node --check netlify/functions/save-shopper-signup.js && node --check netlify/functions/shopper-session.js && node --check netlify/functions/smart-add.js && node --check netlify/functions/platform-admin.js && node --check netlify/functions/product-intake.js",
     "preview": "vite preview"
   },
   "dependencies": {

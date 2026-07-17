@@ -1,4 +1,4 @@
-import { adminClient, json, requireMerchant } from './_supabase.js'
+import { adminClient, json, requireMerchant, token } from './_supabase.js'
 
 function bad(message) {
   return json(400, { error: message })
@@ -51,6 +51,7 @@ export async function handler(event) {
         full_name: String(fullName || '').trim() || null,
         role: 'cashier',
         is_active: true,
+        terminal_auth_code: token(5).toUpperCase(),
       })
       .select('*')
       .single()

@@ -2990,6 +2990,7 @@ function StaffManagement() {
   return (
     <section className="dash-section">
       <PageTitle title="Staff" subtitle="Add cashier accounts for counter checkout." />
+      <Notice tone="warning">Each cashier must use their email, password, store name and terminal authentication code at login.</Notice>
       {message ? <Notice tone={message.includes('created') ? 'success' : 'warning'}>{message}</Notice> : null}
       <form className="product-form" onSubmit={submit}>
         <h2>Add cashier</h2>
@@ -3036,6 +3037,7 @@ function StaffManagement() {
                 <th>Name</th>
                 <th>Email</th>
                 <th>Role</th>
+                <th>Terminal code</th>
                 <th>Status</th>
                 <th>Actions</th>
               </tr>
@@ -3046,6 +3048,7 @@ function StaffManagement() {
                   <td>{member.full_name || 'Not set'}</td>
                   <td>{member.email}</td>
                   <td>{member.role}</td>
+                  <td>{member.terminal_auth_code || 'Run migration'}</td>
                   <td>{member.is_active ? 'Active' : 'Disabled'}</td>
                   <td>
                     <button type="button" onClick={() => setActive(member, !member.is_active)}>
@@ -3593,38 +3596,153 @@ function QrPage() {
   )
 }
 
+const cashierCatalogKey = 'glide:cashier:catalog'
+const cashierTerminalKey = 'glide:cashier:terminal'
+const cashierHeldOrdersKey = 'glide:cashier:held-orders'
+const cashierQueueKey = 'glide:cashier:queue'
+
+function readJsonStorage(key, fallback) {
+  try {
+    const value = localStorage.getItem(key)
+    return value ? JSON.parse(value) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function writeJsonStorage(key, value) {
+  localStorage.setItem(key, JSON.stringify(value))
+}
+
 function CashierPage({ session }) {
+  const [terminal, setTerminal] = useState(() => readJsonStorage(cashierTerminalKey, null))
+  const [catalog, setCatalog] = useState(() => readJsonStorage(cashierCatalogKey, []))
+  const [gateway, setGateway] = useState({ storeName: terminal?.storeName || '', authCode: '' })
+  const [mode, setMode] = useState('home')
   const [barcode, setBarcode] = useState('')
   const [cart, setCart] = useState([])
+  const [heldOrders, setHeldOrders] = useState(() => readJsonStorage(cashierHeldOrdersKey, []))
+  const [queue, setQueue] = useState(() => readJsonStorage(cashierQueueKey, []))
+  const [payment, setPayment] = useState({ type: 'Cash', reference: '' })
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [receiptToken, setReceiptToken] = useState('')
+  const [auditOrder, setAuditOrder] = useState(null)
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
+  const [online, setOnline] = useState(() => navigator.onLine)
+
+  const cartCount = cart.reduce((sum, item) => sum + item.cartQuantity, 0)
+  const total = cart.reduce((sum, item) => sum + Number(item.price) * item.cartQuantity, 0)
+
+  const groupedAuditItems = useMemo(() => {
+    const rows = auditOrder?.order_items || []
+    return [...rows].sort((left, right) => {
+      const leftValue = Number(left.line_total || 0)
+      const rightValue = Number(right.line_total || 0)
+      return rightValue - leftValue
+    })
+  }, [auditOrder])
+
+  const searchResults = useMemo(() => {
+    const term = searchQuery.trim().toLowerCase()
+    if (!term) return catalog.slice(0, 12)
+    return catalog
+      .filter((product) => {
+        const text = `${product.name} ${product.barcode} ${product.sku} ${product.category}`.toLowerCase()
+        return text.includes(term)
+      })
+      .slice(0, 20)
+  }, [catalog, searchQuery])
+
+  useEffect(() => {
+    const refreshNetwork = () => setOnline(navigator.onLine)
+    window.addEventListener('online', refreshNetwork)
+    window.addEventListener('offline', refreshNetwork)
+    return () => {
+      window.removeEventListener('online', refreshNetwork)
+      window.removeEventListener('offline', refreshNetwork)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (terminal?.cashierEmail && terminal.cashierEmail !== session.user.email) {
+      localStorage.removeItem(cashierTerminalKey)
+      setTerminal(null)
+    }
+  }, [session.user.email, terminal])
+
+  useEffect(() => {
+    writeJsonStorage(cashierHeldOrdersKey, heldOrders)
+  }, [heldOrders])
+
+  useEffect(() => {
+    writeJsonStorage(cashierQueueKey, queue)
+  }, [queue])
+
+  useEffect(() => {
+    if (terminal) writeJsonStorage(cashierTerminalKey, terminal)
+  }, [terminal])
+
+  useEffect(() => {
+    writeJsonStorage(cashierCatalogKey, catalog)
+  }, [catalog])
+
+  useEffect(() => {
+    let channel
+    try {
+      channel = new BroadcastChannel('glide-cashier-terminal')
+      channel.onmessage = (event) => {
+        if (event.data?.type === 'receipt-burned' && event.data.receiptToken === auditOrder?.receipt_token) {
+          setAuditOrder((current) => current ? { ...current, status: 'exited' } : current)
+          setMessage('Security Warning: Receipt Already Used.')
+        }
+      }
+    } catch {
+      return undefined
+    }
+
+    return () => channel?.close()
+  }, [auditOrder?.receipt_token])
 
   async function logout() {
+    localStorage.removeItem(cashierTerminalKey)
+    setTerminal(null)
     await supabase.auth.signOut()
     navigate('/login')
   }
 
-  async function addBarcode(event) {
+  function updateGateway(field, value) {
+    setGateway((current) => ({ ...current, [field]: value }))
+  }
+
+  async function validateGateway(event) {
     event.preventDefault()
-    const code = barcode.trim()
-    if (!code) return
-
+    setBusy(true)
     setMessage('')
-    const { data, error } = await supabase
-      .from('products')
-      .select(productColumns)
-      .eq('barcode', code)
-      .eq('is_available', true)
-      .maybeSingle()
 
-    if (error || !data) {
-      setMessage('Product not found or unavailable.')
-      return
+    try {
+      const result = await callFunction('cashier-terminal', {
+        action: 'validate-terminal',
+        storeName: gateway.storeName,
+        authCode: gateway.authCode,
+      })
+      setTerminal(result.terminal)
+      setCatalog(result.catalog || [])
+      setGateway((current) => ({ ...current, authCode: '' }))
+      setMessage('Terminal unlocked. Product catalog cached on this device.')
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setBusy(false)
     }
+  }
 
-    const existing = cart.find((item) => item.id === data.id)
+  function addProduct(product) {
+    const existing = cart.find((item) => item.id === product.id)
     const nextQuantity = (existing?.cartQuantity || 0) + 1
-    if (data.track_inventory && nextQuantity > data.quantity) {
+
+    if (product.track_inventory && nextQuantity > product.quantity) {
       setMessage('This item is out of stock.')
       return
     }
@@ -3632,11 +3750,27 @@ function CashierPage({ session }) {
     setCart((current) =>
       existing
         ? current.map((item) =>
-            item.id === data.id ? { ...item, cartQuantity: nextQuantity } : item,
+            item.id === product.id ? { ...item, cartQuantity: nextQuantity } : item,
           )
-        : [...current, { ...data, cartQuantity: 1 }],
+        : [...current, { ...product, cartQuantity: 1 }],
     )
     setBarcode('')
+    setSearchOpen(false)
+    setMessage(`${product.name} added.`)
+  }
+
+  function addBarcode(event) {
+    event.preventDefault()
+    const code = barcode.trim()
+    if (!code) return
+
+    const product = catalog.find((item) => item.barcode === code || item.sku === code)
+    if (!product) {
+      setMessage('Product not found in the cached branch catalog.')
+      return
+    }
+
+    addProduct(product)
   }
 
   function changeQuantity(product, delta) {
@@ -3652,16 +3786,102 @@ function CashierPage({ session }) {
     )
   }
 
-  const total = cart.reduce((sum, item) => sum + item.price * item.cartQuantity, 0)
+  function pauseOrder() {
+    if (!cart.length) return
+    setHeldOrders((current) => [
+      {
+        id: `hold-${Date.now()}`,
+        createdAt: new Date().toISOString(),
+        cart,
+        total,
+      },
+      ...current,
+    ])
+    setCart([])
+    setMessage('Order paused. New checkout is ready.')
+  }
+
+  function restoreHeldOrder(order) {
+    if (cart.length) pauseOrder()
+    setCart(order.cart)
+    setHeldOrders((current) => current.filter((item) => item.id !== order.id))
+    setMessage('Held order restored.')
+  }
+
+  function removeHeldOrder(order) {
+    setHeldOrders((current) => current.filter((item) => item.id !== order.id))
+  }
+
+  function decrementCachedInventory(saleCart) {
+    setCatalog((current) =>
+      current.map((product) => {
+        const sold = saleCart.find((item) => item.id === product.id)
+        if (!sold || !product.track_inventory) return product
+        return {
+          ...product,
+          quantity: Math.max(0, Number(product.quantity || 0) - sold.cartQuantity),
+        }
+      }),
+    )
+  }
+
+  const syncQueuedOrders = useCallback(async () => {
+    if (!queue.length || busy) return
+    setBusy(true)
+    const [nextOrder, ...remaining] = queue
+
+    try {
+      const result = await callFunction('cashier-create-order', {
+        cart: nextOrder.cart.map((item) => ({ productId: item.id, quantity: item.cartQuantity })),
+        paymentType: nextOrder.paymentType,
+        manualReference: nextOrder.manualReference,
+      })
+      setQueue(remaining)
+      setMessage(`Synced queued sale. Receipt ${result.receiptToken}.`)
+    } catch (error) {
+      setMessage(`Queue waiting: ${error.message}`)
+    } finally {
+      setBusy(false)
+    }
+  }, [busy, queue])
+
+  useEffect(() => {
+    if (online && terminal && queue.length) syncQueuedOrders()
+  }, [online, terminal, queue.length, syncQueuedOrders])
 
   async function completeSale() {
+    if (!cart.length) return
+    const sale = {
+      id: `sale-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      cart,
+      paymentType: payment.type,
+      manualReference: payment.reference.trim(),
+      total,
+    }
+
+    if (!online) {
+      setQueue((current) => [sale, ...current])
+      decrementCachedInventory(sale.cart)
+      setCart([])
+      setPayment({ type: 'Cash', reference: '' })
+      setMessage('Offline sale stored safely on this device.')
+      window.print()
+      return
+    }
+
     setBusy(true)
     setMessage('')
 
     try {
       const result = await callFunction('cashier-create-order', {
-        cart: cart.map((item) => ({ productId: item.id, quantity: item.cartQuantity })),
+        cart: sale.cart.map((item) => ({ productId: item.id, quantity: item.cartQuantity })),
+        paymentType: sale.paymentType,
+        manualReference: sale.manualReference,
       })
+      decrementCachedInventory(sale.cart)
+      setCart([])
+      setPayment({ type: 'Cash', reference: '' })
       navigate(`/receipt/${result.receiptToken}`)
     } catch (error) {
       setMessage(error.message)
@@ -3670,89 +3890,333 @@ function CashierPage({ session }) {
     }
   }
 
+  async function verifyReceipt(event) {
+    event.preventDefault()
+    const token = receiptToken.trim()
+    if (!token) return
+
+    setBusy(true)
+    setMessage('')
+    setAuditOrder(null)
+
+    try {
+      const result = await callFunction('cashier-terminal', {
+        action: 'verify-receipt',
+        receiptToken: token,
+      })
+      setAuditOrder(result.order)
+      if (result.order.status === 'exited') {
+        setMessage('Security Warning: Receipt Already Used.')
+      }
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function burnReceipt() {
+    if (!auditOrder?.receipt_token) return
+    setBusy(true)
+    setMessage('')
+
+    try {
+      const result = await callFunction('cashier-terminal', {
+        action: 'burn-receipt',
+        receiptToken: auditOrder.receipt_token,
+      })
+      try {
+        const channel = new BroadcastChannel('glide-cashier-terminal')
+        channel.postMessage({ type: 'receipt-burned', receiptToken: auditOrder.receipt_token })
+        channel.close()
+      } catch {
+        // BroadcastChannel is best-effort across nearby browser contexts.
+      }
+      setAuditOrder(result.order)
+      setMessage('Receipt confirmed and marked paid. Exit token burned.')
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!terminal) {
+    return (
+      <main className="cashier-page cashier-lock-page">
+        <form className="cashier-lock-panel" onSubmit={validateGateway}>
+          <Link className="brand" href="/">
+            Glide Cashier
+          </Link>
+          <p className="eyebrow">Secure terminal</p>
+          <h1>Unlock store access</h1>
+          <p>Sign-in is complete. Enter the assigned store name and active authentication code for this branch.</p>
+          {message ? <Notice tone="warning">{message}</Notice> : null}
+          <label>
+            Store Name
+            <input
+              required
+              autoFocus
+              value={gateway.storeName}
+              onChange={(event) => updateGateway('storeName', event.target.value)}
+            />
+          </label>
+          <label>
+            Authentication Code
+            <input
+              required
+              autoCapitalize="characters"
+              value={gateway.authCode}
+              onChange={(event) => updateGateway('authCode', event.target.value.toUpperCase())}
+            />
+          </label>
+          <button disabled={busy} type="submit">
+            {busy ? 'Checking terminal...' : 'Unlock terminal'}
+          </button>
+          <button type="button" onClick={logout}>
+            Sign out
+          </button>
+        </form>
+      </main>
+    )
+  }
+
   return (
     <main className="cashier-page">
       <header className="cashier-header">
         <div>
-          <span>Glide cashier</span>
-          <strong>Counter checkout</strong>
-          <small>{session.user.email}</small>
+          <span>{terminal.storeName}</span>
+          <strong>{mode === 'home' ? 'Cashier dashboard' : mode === 'manual' ? 'Manual Checkout' : 'Self-Checkout Verification'}</strong>
+          <small>{terminal.branchName || 'Main branch'} - {session.user.email}</small>
         </div>
-        <button type="button" onClick={logout}>
-          Sign out
-        </button>
+        <div className="cashier-header-actions">
+          {mode !== 'home' ? (
+            <button type="button" onClick={() => setMode('home')}>
+              Home
+            </button>
+          ) : null}
+          <button type="button" onClick={logout}>
+            Sign out
+          </button>
+        </div>
       </header>
 
-      {message ? <Notice tone="warning">{message}</Notice> : null}
+      {message ? <Notice tone={message.includes('Security Warning') ? 'error' : message.includes('added') || message.includes('confirmed') || message.includes('unlocked') ? 'success' : 'warning'}>{message}</Notice> : null}
 
-      <form className="barcode-form" onSubmit={addBarcode}>
-        <label>
-          Scan or enter barcode
-          <input
-            autoFocus
-            inputMode="numeric"
-            placeholder="Barcode"
-            value={barcode}
-            onChange={(event) => setBarcode(event.target.value)}
-          />
-        </label>
-        <button type="submit">Add</button>
-      </form>
+      {mode === 'home' ? (
+        <section className="cashier-home-panel">
+          <button className="cashier-mode-button manual" type="button" onClick={() => setMode('manual')}>
+            <span>Manual Checkout</span>
+            <small>Walk-in shoppers, scanner cart and counter payment</small>
+          </button>
+          <button className="cashier-mode-button verify" type="button" onClick={() => setMode('verify')}>
+            <span>Self-Checkout Verification</span>
+            <small>Smart Shopper receipt audit and token burn</small>
+          </button>
+        </section>
+      ) : null}
 
-      <section className="cart-panel active cashier-cart">
-        <div className="cart-title-row">
-          <h1>Cashier cart</h1>
-          <strong>{formatMoney(total)}</strong>
-        </div>
+      {mode === 'manual' ? (
+        <>
+          <form className="cashier-scan-bar" onSubmit={addBarcode}>
+            <label>
+              Scan barcode
+              <input
+                autoFocus
+                inputMode="numeric"
+                placeholder="Hardware scanner or manual barcode"
+                value={barcode}
+                onChange={(event) => setBarcode(event.target.value)}
+              />
+            </label>
+            <button type="submit">Add</button>
+            <button type="button" onClick={() => setSearchOpen(true)}>
+              Search Items
+            </button>
+            <button disabled={!cart.length} type="button" onClick={pauseOrder}>
+              Pause Order
+            </button>
+          </form>
 
-        {cart.length ? (
-          <>
-            {cart.map((item) => (
-              <div className="cart-row" key={item.id}>
-                <button
-                  className="cart-remove-dot"
-                  type="button"
-                  aria-label={`Remove ${item.name}`}
-                  onClick={() => changeQuantity(item, -item.cartQuantity)}
-                >
-                  x
-                </button>
-                <div className="product-thumb" aria-hidden="true">
-                  {productInitials(item.name)}
-                </div>
-                <div className="cart-item-copy">
-                  <strong>{item.name}</strong>
-                  <span>{formatMoney(item.price)}</span>
-                </div>
-                <strong className="cart-line-total">
-                  {formatMoney(item.price * item.cartQuantity)}
-                </strong>
-                <div className="quantity-actions">
-                  <button type="button" onClick={() => changeQuantity(item, -1)}>
-                    -
+          {heldOrders.length ? (
+            <section className="held-order-strip" aria-label="Paused orders">
+              {heldOrders.map((order) => (
+                <div key={order.id}>
+                  <span>{order.cart.reduce((sum, item) => sum + item.cartQuantity, 0)} items</span>
+                  <strong>{formatMoney(order.total)}</strong>
+                  <button type="button" onClick={() => restoreHeldOrder(order)}>
+                    Restore
                   </button>
-                  <span>{item.cartQuantity}</span>
-                  <button type="button" onClick={() => changeQuantity(item, 1)}>
-                    +
+                  <button type="button" onClick={() => removeHeldOrder(order)}>
+                    Clear
                   </button>
                 </div>
-              </div>
-            ))}
+              ))}
+            </section>
+          ) : null}
 
-            <div className="cart-checkout-bar">
-              <div className="cart-total">
-                <span>Total</span>
-                <strong>{formatMoney(total)}</strong>
+          <section className="cart-panel active cashier-cart">
+            <div className="cart-title-row">
+              <h1>Active cart</h1>
+              <strong>{cartCount} items - {formatMoney(total)}</strong>
+            </div>
+
+            {cart.length ? (
+              <>
+                {cart.map((item) => (
+                  <div className="cart-row" key={item.id}>
+                    <button
+                      className="cart-remove-dot"
+                      type="button"
+                      aria-label={`Remove ${item.name}`}
+                      onClick={() => changeQuantity(item, -item.cartQuantity)}
+                    >
+                      x
+                    </button>
+                    <div className="product-thumb" aria-hidden="true">
+                      {productInitials(item.name)}
+                    </div>
+                    <div className="cart-item-copy">
+                      <strong>{item.name}</strong>
+                      <span>{item.barcode} - {formatMoney(item.price)}</span>
+                    </div>
+                    <strong className="cart-line-total">
+                      {formatMoney(item.price * item.cartQuantity)}
+                    </strong>
+                    <div className="quantity-actions">
+                      <button type="button" onClick={() => changeQuantity(item, -1)}>
+                        -
+                      </button>
+                      <span>{item.cartQuantity}</span>
+                      <button type="button" onClick={() => changeQuantity(item, 1)}>
+                        +
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                <div className="cashier-payment-panel">
+                  <label>
+                    Payment type
+                    <select
+                      value={payment.type}
+                      onChange={(event) => setPayment((current) => ({ ...current, type: event.target.value }))}
+                    >
+                      <option>Cash</option>
+                      <option>Card</option>
+                      <option>Bank Transfer</option>
+                    </select>
+                  </label>
+                  <label>
+                    Manual reference
+                    <input
+                      placeholder={online ? 'Optional' : 'Required while offline'}
+                      value={payment.reference}
+                      onChange={(event) => setPayment((current) => ({ ...current, reference: event.target.value }))}
+                    />
+                  </label>
+                </div>
+
+                <div className="cart-checkout-bar">
+                  <div className="cart-total">
+                    <span>Total</span>
+                    <strong>{formatMoney(total)}</strong>
+                  </div>
+                  <button disabled={busy} type="button" onClick={completeSale}>
+                    {busy ? 'Finishing sale...' : online ? 'Print receipt and close sale' : 'Store offline sale'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <EmptyState>Scan a barcode, search by item name, or restore a paused order.</EmptyState>
+            )}
+          </section>
+        </>
+      ) : null}
+
+      {mode === 'verify' ? (
+        <section className="cashier-verify-panel">
+          <form className="cashier-scan-bar" onSubmit={verifyReceipt}>
+            <label>
+              Receipt barcode
+              <input
+                autoFocus
+                placeholder="Scan customer exit pass"
+                value={receiptToken}
+                onChange={(event) => setReceiptToken(event.target.value)}
+              />
+            </label>
+            <button disabled={busy} type="submit">
+              {busy ? 'Checking...' : 'Scan Receipt'}
+            </button>
+          </form>
+
+          {auditOrder ? (
+            <section className={`audit-card ${auditOrder.status === 'exited' ? 'used' : ''}`}>
+              <div className="audit-summary">
+                <span>{auditOrder.status === 'exited' ? 'Security Warning: Receipt Already Used' : `${groupedAuditItems.reduce((sum, item) => sum + item.quantity, 0)} Items Total - Paid`}</span>
+                <strong>{formatMoney(auditOrder.total_amount)}</strong>
               </div>
-              <button disabled={busy} type="button" onClick={completeSale}>
-                {busy ? 'Generating receipt...' : 'Mark paid and generate receipt'}
+              <div className="audit-list">
+                {groupedAuditItems.map((item) => (
+                  <div className={Number(item.line_total) >= 10000 ? 'high-value' : ''} key={item.id}>
+                    <span>{item.product_name}</span>
+                    <strong>{item.quantity} x {formatMoney(item.unit_price)}</strong>
+                  </div>
+                ))}
+              </div>
+              <button
+                className="confirm-exit-button"
+                disabled={busy || auditOrder.status === 'exited'}
+                type="button"
+                onClick={burnReceipt}
+              >
+                Confirm and Mark Paid
+              </button>
+            </section>
+          ) : (
+            <EmptyState>Scan the Smart Shopper receipt barcode to load the purchase manifest.</EmptyState>
+          )}
+        </section>
+      ) : null}
+
+      {searchOpen ? (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setSearchOpen(false)}>
+          <section className="modal-panel cashier-search-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="cart-title-row">
+              <h1>Search Items</h1>
+              <button type="button" onClick={() => setSearchOpen(false)}>
+                Close
               </button>
             </div>
-          </>
-        ) : (
-          <EmptyState>Scan or enter a product barcode to begin.</EmptyState>
-        )}
-      </section>
+            <input
+              autoFocus
+              placeholder="Name, barcode or SKU"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+            />
+            <div className="cashier-search-list">
+              {searchResults.map((product) => (
+                <button type="button" key={product.id} onClick={() => addProduct(product)}>
+                  <span>{product.name}</span>
+                  <strong>{formatMoney(product.price)}</strong>
+                  <small>{product.barcode || product.sku}</small>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      <footer className={`cashier-status-bar ${online ? 'online' : 'offline'}`}>
+        <span>{online ? 'Online and synced' : 'Offline mode'}</span>
+        <strong>{queue.length} transaction{queue.length === 1 ? '' : 's'} waiting to upload</strong>
+        {online && queue.length ? (
+          <button disabled={busy} type="button" onClick={syncQueuedOrders}>
+            Sync now
+          </button>
+        ) : null}
+      </footer>
     </main>
   )
 }

@@ -10,7 +10,7 @@ export async function handler(event) {
   try {
     const supabase = adminClient()
     const access = await requireMerchantOrStaff(event, supabase)
-    const { cart } = JSON.parse(event.body || '{}')
+    const { cart, paymentType, manualReference } = JSON.parse(event.body || '{}')
 
     if (!Array.isArray(cart) || cart.length === 0) return bad('Cart is empty.')
 
@@ -77,8 +77,8 @@ export async function handler(event) {
     await supabase.from('payments').insert({
       merchant_id: access.merchant.id,
       order_id: orderResult.data.id,
-      provider: 'cashier',
-      provider_reference: `cashier_${token(10)}`,
+      provider: `cashier_${String(paymentType || 'cash').toLowerCase().replace(/\s+/g, '_')}`,
+      provider_reference: String(manualReference || '').trim() || `cashier_${token(10)}`,
       status: 'paid',
       amount: total,
       paid_at: new Date().toISOString(),
