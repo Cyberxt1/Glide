@@ -1610,6 +1610,17 @@ function StoreSetup({ session }) {
 }
 
 function AppShell({ session, main }) {
+  const path = usePath()
+  const navItems = [
+    { href: '/dash', label: 'Overview', icon: 'grid' },
+    { href: '/dash/orders', label: 'Orders', icon: 'receipt' },
+    { href: '/dash/products', label: 'Inventory', icon: 'box' },
+    { href: '/dash/qr', label: 'Store QR', icon: 'qr' },
+    { href: '/dash/staff', label: 'Team', icon: 'team' },
+    { href: '/cashier', label: 'Cashier', icon: 'terminal' },
+    { href: '/dash/verify', label: 'Security gate', icon: 'shield' },
+  ]
+
   async function logout() {
     await supabase.auth.signOut()
     navigate('/login')
@@ -1622,23 +1633,39 @@ function AppShell({ session, main }) {
           <Link className="brand" href="/dash">
             Glide
           </Link>
-          <span>Store MVP</span>
+          <span>Store</span>
         </div>
+        <div className="store-identity">
+          <span aria-hidden="true">F</span>
+          <div>
+            <strong>Foodco Stores</strong>
+            <small>Akobo</small>
+          </div>
+        </div>
+        <p className="workspace-label">Workspace</p>
         <nav>
-          <Link href="/dash">Dashboard</Link>
-          <Link href="/dash/products">Products</Link>
-          <Link href="/dash/smart-add">Smart Add</Link>
-          <Link href="/dash/import">CSV import</Link>
-          <Link href="/dash/qr">Store QR</Link>
-          <Link href="/dash/verify">Verify receipt</Link>
-          <Link href="/dash/orders">Orders</Link>
-          <Link href="/dash/staff">Staff</Link>
+          {navItems.map((item) => {
+            const active = item.href === '/dash' ? path === '/dash' : path.startsWith(item.href)
+            return (
+              <Link key={item.href} className={active ? 'active' : ''} href={item.href}>
+                <span className={`nav-glyph ${item.icon}`} aria-hidden="true" />
+                {item.label}
+              </Link>
+            )
+          })}
         </nav>
+        <div className="system-health">
+          <span aria-hidden="true" />
+          <div>
+            <strong>Systems online</strong>
+            <small>Network steady</small>
+          </div>
+        </div>
         <div className="merchant-meta">
-          <span>{session?.user?.email}</span>
           <button type="button" onClick={logout}>
             Sign out
           </button>
+          <span>{session?.user?.email}</span>
         </div>
       </aside>
       <main className="dash-main">{main}</main>
@@ -1696,38 +1723,51 @@ function Dashboard() {
   const exitHealth = data.pendingPaidOrders
     ? `${data.pendingPaidOrders} waiting`
     : 'Clear'
+  const storeName = data.storeName || 'Foodco Stores'
+  const branchName = data.branchName || 'Akobo'
+  const networkText = state.loading ? 'Checking network strength...' : 'Systems online'
+  const delayText = state.loading ? 'Process may take longer on a weak network' : 'Signal strong'
 
   return (
     <section className="dash-section">
-      <div className="dashboard-command">
-        <div className="dashboard-hero">
-          <PageTitle
-            title={data.storeName || 'Store dashboard'}
-            subtitle={`${data.branchName ? `${data.branchName} - ` : ''}Store dashboard for live activity, stock risk and exit readiness.`}
-          />
-          <div className="dashboard-status">
-            <span>Today revenue</span>
-            <strong>{formatMoney(data.todayRevenue)}</strong>
-            <small>{data.todayPaidOrders} paid orders</small>
-          </div>
+      <div className="store-ops-hero">
+        <div>
+          <p className="ops-eyebrow">Live operations</p>
+          <h1>Good day, {storeName}.</h1>
+          <p>{branchName} - Ibadan</p>
         </div>
-        <div className="ops-strip" aria-label="Store health">
-          <div>
-            <span>Stock health</span>
-            <strong>{stockHealth}</strong>
-          </div>
-          <div>
-            <span>Exit queue</span>
-            <strong>{exitHealth}</strong>
-          </div>
-          <div>
-            <span>Average basket</span>
-            <strong>{formatMoney(data.averageOrderValue)}</strong>
-          </div>
+        <div className="live-pill">
+          <span aria-hidden="true" />
+          <strong>{networkText}</strong>
+          <small>{delayText}</small>
         </div>
       </div>
+
+      <div className="store-kpi-grid" aria-label="Store health">
+        <div>
+          <span>Revenue today</span>
+          <strong>{formatMoney(data.todayRevenue)}</strong>
+          <small>Verified payments only</small>
+        </div>
+        <div>
+          <span>Orders today</span>
+          <strong>{String(data.todayPaidOrders).padStart(2, '0')}</strong>
+          <small>{data.todayPaidOrders} currently active</small>
+        </div>
+        <div>
+          <span>Ready for exit</span>
+          <strong>{String(data.pendingPaidOrders).padStart(2, '0')}</strong>
+          <small>{exitHealth === 'Clear' ? 'Awaiting security' : exitHealth}</small>
+        </div>
+        <div>
+          <span>Low stock</span>
+          <strong>{String(data.lowStockCount).padStart(2, '0')}</strong>
+          <small>{stockHealth === 'Healthy' ? 'At or below threshold' : stockHealth}</small>
+        </div>
+      </div>
+
       {state.loading ? (
-        <LoadingRows />
+        <Notice tone="warning">Checking network strength. Some store processes may delay briefly.</Notice>
       ) : (
         <>
           {state.error ? (
@@ -1736,57 +1776,45 @@ function Dashboard() {
               Netlify dev so the summary function is available. {state.error}
             </Notice>
           ) : null}
-          <div className="metric-grid">
-            <Metric label="Products live" value={data.totalProducts} />
-            <Metric label="Low stock" value={data.lowStockCount} />
-            <Metric label="Paid orders today" value={data.todayPaidOrders} />
-            <Metric label="Revenue today" value={formatMoney(data.todayRevenue)} />
-            <Metric label="Awaiting exit" value={data.pendingPaidOrders} />
-            <Metric label="Completed exits" value={data.completedExits} />
-          </div>
-
-          <div className="quick-actions">
-            <Link href="/dash/products?action=add" className="primary-action">
-              Add product
-            </Link>
-            <Link href="/dash/smart-add" className="primary-action">
-              Smart Add
-            </Link>
-            <Link href="/dash/import" className="secondary-action">
-              Import CSV
-            </Link>
-            <Link href="/dash/qr" className="secondary-action">
-              View checkout QR
-            </Link>
-            <Link href="/dash/verify" className="secondary-action">
-              Open receipt verifier
-            </Link>
-            <Link href="/dash/orders" className="secondary-action">
-              Review orders
-            </Link>
-          </div>
-
-          <TwoColumn>
-            <Panel title="Recent orders">
+          <div className="store-work-grid">
+            <section className="order-movement">
+              <header>
+                <div>
+                  <span>Today</span>
+                  <h2>Order movement</h2>
+                </div>
+                <Link href="/dash/orders">View all {'->'}</Link>
+              </header>
               {data.recentOrders.length ? (
                 <OrderList orders={data.recentOrders} />
               ) : (
-                <EmptyState>No orders yet.</EmptyState>
+                <div className="quiet-state">
+                  <span>Quiet for now</span>
+                  <strong>Your first verified order will appear here.</strong>
+                  <small>Network updates are monitored as activity changes.</small>
+                </div>
               )}
-            </Panel>
-            <Panel title="Top selling products">
-              {data.topProducts.length ? (
-                <SimpleList
-                  rows={data.topProducts.map((item) => ({
-                    label: item.name,
-                    value: `${item.quantity_sold} sold`,
-                  }))}
-                />
-              ) : (
-                <EmptyState>No paid product sales yet.</EmptyState>
-              )}
-            </Panel>
-          </TwoColumn>
+            </section>
+            <aside className="quick-shift">
+              <span>Quick shift</span>
+              <h2>Open a workspace</h2>
+              <Link href="/cashier">
+                <small>Cashier fulfilment</small>
+                <strong>Pack paid orders</strong>
+                <b aria-hidden="true">-&gt;</b>
+              </Link>
+              <Link href="/dash/verify">
+                <small>Security gate</small>
+                <strong>Verify customer exits</strong>
+                <b aria-hidden="true">-&gt;</b>
+              </Link>
+              <Link href="/dash/products">
+                <small>Inventory</small>
+                <strong>Review stock levels</strong>
+                <b aria-hidden="true">-&gt;</b>
+              </Link>
+            </aside>
+          </div>
         </>
       )}
     </section>
