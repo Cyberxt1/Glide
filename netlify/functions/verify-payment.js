@@ -38,6 +38,16 @@ export async function handler(event) {
     if (orderResult.error) return bad('Order not found.')
     const order = orderResult.data
 
+    await supabase.rpc('cancel_expired_pending_orders', { target_merchant_id: order.merchant_id })
+
+    if (
+      order.status === 'cancelled' ||
+      (order.status === 'pending_payment' &&
+        new Date(order.created_at).getTime() <= Date.now() - 60 * 60 * 1000)
+    ) {
+      return bad('This unpaid order expired after one hour. Please create a new order.')
+    }
+
     if (order.status === 'paid' || order.status === 'exited') {
       return json(200, { order })
     }

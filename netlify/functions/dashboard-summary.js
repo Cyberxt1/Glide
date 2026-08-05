@@ -15,8 +15,9 @@ export async function handler(event) {
     const supabase = adminClient()
     const merchant = await requireMerchant(event, supabase)
     const { start, end } = startOfToday()
+    await supabase.rpc('cancel_expired_pending_orders', { target_merchant_id: merchant.id })
 
-    const [products, todayOrders, pendingPaid, exited, recentOrders, paidItems] =
+    const [products, todayOrders, pendingPaid, exited, recentOrders, paidItems, activeStaff] =
       await Promise.all([
         supabase
           .from('products')
@@ -52,6 +53,11 @@ export async function handler(event) {
           .select('product_name,quantity,orders!inner(merchant_id,payment_status)')
           .eq('orders.merchant_id', merchant.id)
           .eq('orders.payment_status', 'paid'),
+        supabase
+          .from('staff_members')
+          .select('id,full_name,email,role,last_seen_at,current_station,is_active')
+          .eq('merchant_id', merchant.id)
+          .eq('is_active', true),
       ])
 
     const productRows = products.data || []
@@ -83,6 +89,12 @@ export async function handler(event) {
       averageOrderValue: orderRows.length ? todayRevenue / orderRows.length : 0,
       recentOrders: recentOrders.data || [],
       topProducts,
+      activeStaff: (activeStaff.data || []).map((member) => ({
+        ...member,
+        is_online: member.last_seen_at
+          ? Date.now() - new Date(member.last_seen_at).getTime() < 2 * 60 * 1000
+          : false,
+      })),
     })
   } catch (error) {
     return json(401, { error: error.message })

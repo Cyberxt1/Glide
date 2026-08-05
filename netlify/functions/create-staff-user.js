@@ -10,11 +10,12 @@ export async function handler(event) {
   try {
     const supabase = adminClient()
     const merchant = await requireMerchant(event, supabase)
-    const { email, password, fullName } = JSON.parse(event.body || '{}')
+    const { email, password, fullName, role } = JSON.parse(event.body || '{}')
     const cleanEmail = String(email || '').trim().toLowerCase()
+    const cleanRole = ['cashier', 'security'].includes(role) ? role : 'cashier'
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      return bad('Enter a valid cashier email address.')
+      return bad('Enter a valid staff email address.')
     }
 
     if (!password || String(password).length < 6) {
@@ -28,14 +29,14 @@ export async function handler(event) {
       .eq('email', cleanEmail)
       .maybeSingle()
 
-    if (existing.data) return bad('This cashier already exists.')
+    if (existing.data) return bad('This staff member already exists.')
 
     const userResult = await supabase.auth.admin.createUser({
       email: cleanEmail,
       password,
       email_confirm: true,
       user_metadata: {
-        role: 'cashier',
+        role: cleanRole,
         merchant_id: merchant.id,
       },
     })
@@ -49,7 +50,7 @@ export async function handler(event) {
         user_id: userResult.data.user.id,
         email: cleanEmail,
         full_name: String(fullName || '').trim() || null,
-        role: 'cashier',
+        role: cleanRole,
         is_active: true,
         terminal_auth_code: token(5).toUpperCase(),
       })

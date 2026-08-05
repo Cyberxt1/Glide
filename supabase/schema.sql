@@ -16,9 +16,11 @@ create table if not exists public.staff_members (
   user_id uuid not null unique references auth.users(id) on delete cascade,
   email text not null,
   full_name text,
-  role text not null default 'cashier' check (role in ('cashier')),
+  role text not null default 'cashier' check (role in ('cashier', 'security')),
   is_active boolean not null default true,
   terminal_auth_code text,
+  last_seen_at timestamptz,
+  current_station text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (merchant_id, email)
@@ -34,6 +36,10 @@ create table if not exists public.products (
   price numeric(12,2) not null check (price >= 0),
   quantity integer not null default 0 check (quantity >= 0),
   low_stock_threshold integer not null default 5 check (low_stock_threshold >= 0),
+  unit_label text not null default 'piece',
+  pack_label text,
+  units_per_pack integer not null default 1 check (units_per_pack >= 1),
+  pack_price numeric(12,2) check (pack_price is null or pack_price >= 0),
   is_available boolean not null default true,
   track_inventory boolean not null default true,
   created_at timestamptz not null default now(),
@@ -84,6 +90,8 @@ create table if not exists public.order_items (
   product_name text not null,
   barcode text,
   quantity integer not null check (quantity > 0),
+  sale_unit text not null default 'piece',
+  unit_quantity integer not null default 1 check (unit_quantity >= 1),
   unit_price numeric(12,2) not null check (unit_price >= 0),
   line_total numeric(12,2) not null check (line_total >= 0),
   created_at timestamptz not null default now()
@@ -116,11 +124,15 @@ create index if not exists products_barcode_idx on public.products(barcode);
 create index if not exists products_sku_idx on public.products(sku);
 create index if not exists staff_members_user_id_idx on public.staff_members(user_id);
 create index if not exists staff_members_merchant_id_idx on public.staff_members(merchant_id);
+create index if not exists staff_members_last_seen_at_idx on public.staff_members(last_seen_at);
 create index if not exists qr_codes_qr_code_idx on public.qr_codes(qr_code);
 create index if not exists orders_receipt_token_idx on public.orders(receipt_token);
 create index if not exists orders_shopper_session_id_idx on public.orders(shopper_session_id);
 create index if not exists orders_status_idx on public.orders(status);
 create index if not exists orders_payment_status_idx on public.orders(payment_status);
+create index if not exists orders_pending_timeout_idx
+  on public.orders(merchant_id, created_at)
+  where status = 'pending_payment' and payment_status = 'pending';
 create unique index if not exists one_active_qr_per_merchant_idx
   on public.qr_codes(merchant_id)
   where is_active;
@@ -170,6 +182,46 @@ as $$
     and user_id = auth.uid()
     and is_active
   );
+$$;
+
+create or replace function public.cancel_expired_pending_orders(target_merchant_id uuid default null)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  affected_count integer;
+begin
+  update public.orders
+  set
+    status = 'cancelled',
+    payment_status = 'failed',
+    updated_at = now()
+  where status = 'pending_payment'
+    and payment_status = 'pending'
+    and created_at <= now() - interval '1 hour'
+    and (target_merchant_id is null or merchant_id = target_merchant_id);
+
+  get diagnostics affected_count = row_count;
+
+  update public.payments
+  set
+    status = 'failed',
+    provider_payload = coalesce(provider_payload, '{}'::jsonb)
+      || jsonb_build_object('cancelled_reason', 'pending_payment_timeout')
+  where status = 'pending'
+    and exists (
+      select 1
+      from public.orders
+      where orders.id = payments.order_id
+        and orders.status = 'cancelled'
+        and orders.payment_status = 'failed'
+        and (target_merchant_id is null or orders.merchant_id = target_merchant_id)
+    );
+
+  return affected_count;
+end;
 $$;
 
 create or replace function public.set_current_merchant()
