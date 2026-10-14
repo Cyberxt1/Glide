@@ -3431,6 +3431,150 @@ td a {
   }
 }
 
+/* Compact merchant command centre */
+.dashboard-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 88px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #d9ddd8;
+}
+
+.dashboard-topbar h1 {
+  margin: 3px 0 2px;
+  color: #0d1c16;
+  font-size: clamp(24px, 3vw, 34px);
+  line-height: 1.05;
+}
+
+.dashboard-topbar p:not(.ops-eyebrow) {
+  margin: 0;
+  color: #778079;
+  font-size: 12px;
+}
+
+.dashboard-topbar .live-pill {
+  flex: 0 0 auto;
+}
+
+.store-kpi-grid {
+  gap: 10px;
+  border: 0;
+}
+
+.store-kpi-grid > div {
+  min-height: 120px;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid #dfe4df;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.store-kpi-grid > div:last-child {
+  border-right: 1px solid #dfe4df;
+}
+
+.store-kpi-grid strong {
+  font-size: clamp(28px, 3vw, 36px);
+}
+
+.dashboard-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dashboard-actions > a {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 84px;
+  padding: 15px;
+  border: 1px solid #dfe4df;
+  border-radius: 14px;
+  color: #17352c;
+  background: #f9fbf9;
+  text-decoration: none;
+  transition: border-color .16s ease, transform .16s ease, background .16s ease;
+}
+
+.dashboard-actions > a:hover {
+  border-color: #2b755c;
+  background: #fff;
+  transform: translateY(-2px);
+}
+
+.dashboard-actions > a > span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  color: #356652;
+  background: #e7f2ec;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.dashboard-actions > a > div {
+  display: grid;
+  gap: 3px;
+}
+
+.dashboard-actions small {
+  color: #7a857f;
+  font-size: 10px;
+}
+
+.dashboard-actions strong {
+  font-size: 13px;
+}
+
+.dashboard-actions b {
+  color: #4e6f61;
+}
+
+.recent-activity-panel {
+  min-height: 300px;
+  margin-top: 18px;
+  background: #fff;
+}
+
+.recent-activity-panel .simple-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 24px;
+}
+
+@media (max-width: 1000px) {
+  .dashboard-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .dashboard-topbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .dashboard-actions,
+  .recent-activity-panel .simple-list {
+    grid-template-columns: 1fr;
+  }
+
+  .store-kpi-grid > div,
+  .store-kpi-grid > div:nth-child(2) {
+    min-height: 108px;
+    border: 1px solid #dfe4df;
+  }
+}
+
 /* Store console redesign */
 .app-shell {
   background:
@@ -5481,5 +5625,38 @@ tbody tr:hover {
 
   .quiet-state {
     padding: 34px 22px;
+  }
+}
+
+/* Final dashboard sizing overrides live after the legacy dashboard theme. */
+.dash-section .store-kpi-grid {
+  gap: 10px;
+  border: 0;
+}
+
+.dash-section .store-kpi-grid > div,
+.dash-section .store-kpi-grid > div:last-child {
+  min-height: 120px;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid #dfe4df;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.dash-section .store-kpi-grid strong {
+  font-size: clamp(28px, 3vw, 36px);
+}
+
+.dash-section .recent-activity-panel {
+  min-height: 300px;
+}
+
+@media (max-width: 640px) {
+  .dash-section .store-kpi-grid > div,
+  .dash-section .store-kpi-grid > div:nth-child(2),
+  .dash-section .store-kpi-grid > div:last-child {
+    min-height: 108px;
+    border: 1px solid #dfe4df;
   }
 }

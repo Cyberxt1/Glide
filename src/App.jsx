@@ -1747,23 +1747,22 @@ function Dashboard() {
     : 'Clear'
   const storeName = data.storeName || 'Foodco Stores'
   const branchName = data.branchName || 'Akobo'
-  const networkText = state.loading ? 'Checking network strength...' : 'Systems online'
-  const delayText = state.loading ? 'Process may take longer on a weak network' : 'Signal strong'
+  const networkText = state.loading ? 'Syncing store data...' : 'Live and synced'
 
   return (
     <section className="dash-section">
-      <div className="store-ops-hero">
+      <header className="dashboard-topbar">
         <div>
-          <p className="ops-eyebrow">Live operations</p>
-          <h1>Good day, {storeName}.</h1>
-          <p>{branchName} - Ibadan</p>
+          <p className="ops-eyebrow">Store overview</p>
+          <h1>{storeName}</h1>
+          <p>{branchName}</p>
         </div>
         <div className="live-pill">
           <span aria-hidden="true" />
           <strong>{networkText}</strong>
-          <small>{delayText}</small>
+          <small>Updates appear automatically</small>
         </div>
-      </div>
+      </header>
 
       <div className="store-kpi-grid" aria-label="Store health">
         <div>
@@ -1777,9 +1776,9 @@ function Dashboard() {
           <small>{data.paymentSummary.failed} failed this week</small>
         </div>
         <div>
-          <span>Ready for exit</span>
+          <span>Shopping complete</span>
           <strong>{String(data.pendingPaidOrders).padStart(2, '0')}</strong>
-          <small>{exitHealth === 'Clear' ? 'Awaiting security' : exitHealth}</small>
+          <small>{exitHealth === 'Clear' ? 'No customers awaiting exit' : exitHealth}</small>
         </div>
         <div>
           <span>Low stock</span>
@@ -1798,49 +1797,11 @@ function Dashboard() {
               Netlify dev so the summary function is available. {state.error}
             </Notice>
           ) : null}
-          <div className="store-work-grid">
-            <section className="order-movement">
-              <header>
-                <div>
-                  <span>Today</span>
-                  <h2>Order movement</h2>
-                </div>
-                <Link href="/dash/orders">View all {'->'}</Link>
-              </header>
-              {data.recentOrders.length ? (
-                <OrderList orders={data.recentOrders} />
-              ) : (
-                <div className="quiet-state">
-                  <span>Quiet for now</span>
-                  <strong>Your first verified order will appear here.</strong>
-                  <small>Network updates are monitored as activity changes.</small>
-                </div>
-              )}
-            </section>
-            <aside className="quick-shift">
-              <span>Quick shift</span>
-              <h2>Open a workspace</h2>
-              <Link href="/cashier">
-                <small>Cashier fulfilment</small>
-                <strong>Pack paid orders</strong>
-                <b aria-hidden="true">-&gt;</b>
-              </Link>
-              <Link href="/dash/verify">
-                <small>Security gate</small>
-                <strong>Verify customer exits</strong>
-                <b aria-hidden="true">-&gt;</b>
-              </Link>
-              <Link href="/dash/products">
-                <small>Inventory</small>
-                <strong>Review stock levels</strong>
-                <b aria-hidden="true">-&gt;</b>
-              </Link>
-              <Link href="/dash/payments">
-                <small>Money flow</small>
-                <strong>Track every payment</strong>
-                <b aria-hidden="true">-&gt;</b>
-              </Link>
-            </aside>
+          <div className="dashboard-actions" aria-label="Store shortcuts">
+            <Link href="/dash/orders"><span>01</span><div><small>In-store shopping</small><strong>View all orders</strong></div><b>→</b></Link>
+            <Link href="/dash/payments"><span>02</span><div><small>Money movement</small><strong>Track payments</strong></div><b>→</b></Link>
+            <Link href="/dash/stock"><span>03</span><div><small>Inventory</small><strong>Update stock</strong></div><b>→</b></Link>
+            <Link href="/dash/verify"><span>04</span><div><small>Store exit</small><strong>Verify receipts</strong></div><b>→</b></Link>
           </div>
           <div className="dashboard-insight-grid">
             <section className="dashboard-insight-card payment-health-card">
@@ -1859,6 +1820,15 @@ function Dashboard() {
               <div className="customer-pulse-meta"><span>{data.customerInsights.feedbackCount} responses</span><span>{data.customerInsights.earlyAccessSignups} early-access signups</span></div>
             </section>
           </div>
+          <section className="order-movement recent-activity-panel">
+            <header>
+              <div><span>Live store feed</span><h2>Recent activity</h2></div>
+              <Link href="/dash/orders">View all activity {'->'}</Link>
+            </header>
+            {data.recentOrders.length ? <OrderList orders={data.recentOrders} /> : (
+              <div className="quiet-state"><span>Quiet for now</span><strong>New in-store orders will appear here.</strong><small>This feed refreshes as customers shop and pay.</small></div>
+            )}
+          </section>
         </>
       )}
     </section>
