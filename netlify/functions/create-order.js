@@ -88,7 +88,7 @@ export async function handler(event) {
 
   try {
     const supabase = adminClient()
-    const { qrCode, cart, shopperSessionId, location, customerEmail } = JSON.parse(event.body || '{}')
+    const { qrCode, cart, shopperSessionId, location, customerEmail, challengeEnabled, spendLimit } = JSON.parse(event.body || '{}')
     const cleanCustomerEmail = String(customerEmail || '').trim().toLowerCase()
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanCustomerEmail)) return bad('Enter a valid email for your receipt.')
     const paymentEmail = cleanCustomerEmail || fallbackEmail(shopperSessionId)
@@ -205,6 +205,9 @@ export async function handler(event) {
         exit_token: exitToken,
         customer_email: cleanCustomerEmail,
         receipt_delivery_status: 'pending',
+        spend_limit: Number(spendLimit) > 0 ? Number(spendLimit) : null,
+        challenge_target: 15000,
+        challenge_qualified: Boolean(challengeEnabled) && total >= 15000,
       })
       .select('*')
       .single()

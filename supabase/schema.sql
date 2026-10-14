@@ -86,6 +86,9 @@ create table if not exists public.orders (
   payment_status text not null default 'pending'
     check (payment_status in ('pending', 'paid', 'failed')),
   total_amount numeric(12,2) not null default 0 check (total_amount >= 0),
+  spend_limit numeric(12,2),
+  challenge_target numeric(12,2) not null default 15000,
+  challenge_qualified boolean not null default false,
   receipt_token text not null unique,
   exit_token text not null unique,
   paid_at timestamptz,

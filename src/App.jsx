@@ -4353,7 +4353,7 @@ function CashierPage({ session }) {
       <header className="cashier-header">
         <div>
           <span>{terminal.storeName}</span>
-          <strong>{mode === 'home' ? 'Cashier dashboard' : 'Manual checkout'}</strong>
+          <strong>{mode === 'home' ? 'Cashier dashboard' : mode === 'verify' ? 'Payment verification' : 'Manual checkout'}</strong>
           <small>{terminal.branchName || 'Main branch'} - {session.user.email}</small>
         </div>
         <div className="cashier-header-actions">
@@ -4376,8 +4376,14 @@ function CashierPage({ session }) {
             <span>Manual Checkout</span>
             <small>Walk-in shoppers, scanner cart and counter payment</small>
           </button>
+          <button className="cashier-mode-button verify" type="button" onClick={() => setMode('verify')}>
+            <span>Verify shopper payment</span>
+            <small>Find a paid receipt, inspect every item and mark the basket</small>
+          </button>
         </section>
       ) : null}
+
+      {mode === 'verify' ? <PaymentVerifier station="cashier" compact /> : null}
 
       {mode === 'manual' ? (
         <>
@@ -4565,6 +4571,11 @@ function CustomerCheckout({ qrCode }) {
   const [pendingPayment, setPendingPayment] = useState(() => readJsonStorage(`glide:pending-payment:${qrCode}`, null))
   const [paymentRecoveryState, setPaymentRecoveryState] = useState('idle')
   const [spendLimit, setSpendLimit] = useState(() => Number(localStorage.getItem(`glide:spend-limit:${qrCode}`)) || 0)
+  const [budgetDraft, setBudgetDraft] = useState('')
+  const [showBudgetPrompt, setShowBudgetPrompt] = useState(false)
+  const [nepoToast, setNepoToast] = useState('')
+  const [limitIgnored, setLimitIgnored] = useState(false)
+  const [limitExceededPrompt, setLimitExceededPrompt] = useState(false)
   const videoRef = useRef(null)
   const toastTimerRef = useRef(null)
   const idleTimerRef = useRef(null)
@@ -4583,12 +4594,14 @@ function CustomerCheckout({ qrCode }) {
   const autoCameraTriedRef = useRef(false)
   const confirmResolveRef = useRef(null)
   const recoveryAttemptedRef = useRef(false)
+  const limitAlertedRef = useRef(false)
   const sessionStorageKey = `glide:checkout:${qrCode}:session`
   const cartStorageKey = `glide:checkout:${qrCode}:cart`
   const activityStorageKey = `glide:checkout:${qrCode}:lastActivity`
   const networkWarningKey = `glide:checkout:${qrCode}:networkWarningShown`
   const spendLimitKey = `glide:spend-limit:${qrCode}`
   const pendingPaymentKey = `glide:pending-payment:${qrCode}`
+  const challengeTarget = 15000
 
   useEffect(() => {
     if (spendLimit > 0) localStorage.setItem(spendLimitKey, String(spendLimit))
@@ -5056,6 +5069,59 @@ function CustomerCheckout({ qrCode }) {
 
   const total = cart.reduce((sum, item) => sum + item.price * item.cartQuantity, 0)
   const cartCount = cart.reduce((sum, item) => sum + item.cartQuantity, 0)
+  const challengeQualified = total >= challengeTarget && !limitIgnored
+
+  useEffect(() => {
+    if (!spendLimit || total <= spendLimit || limitAlertedRef.current) return
+    limitAlertedRef.current = true
+    navigator.vibrate?.([250, 100, 250, 100, 450])
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext
+      if (AudioContext) {
+        const context = audioContextRef.current || new AudioContext()
+        audioContextRef.current = context
+        const oscillator = context.createOscillator()
+        const gain = context.createGain()
+        oscillator.type = 'square'
+        oscillator.frequency.setValueAtTime(620, context.currentTime)
+        oscillator.frequency.setValueAtTime(440, context.currentTime + 0.18)
+        gain.gain.setValueAtTime(0.14, context.currentTime)
+        gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.55)
+        oscillator.connect(gain); gain.connect(context.destination); oscillator.start(); oscillator.stop(context.currentTime + 0.55)
+      }
+    } catch { /* Vibration is the fallback where browser audio is unavailable. */ }
+    setLimitExceededPrompt(true)
+  }, [spendLimit, total])
+
+  function finishShopperIntro() {
+    setShowIntro(false)
+    setShowBudgetPrompt(true)
+  }
+
+  function activateBudget() {
+    const amount = Number(budgetDraft)
+    if (!Number.isFinite(amount) || amount < 100) {
+      setNepoToast('Enter a realistic shopping limit first — even gala don cost pass that 😅')
+      return
+    }
+    setSpendLimit(amount)
+    setLimitIgnored(false)
+    limitAlertedRef.current = false
+    setShowBudgetPrompt(false)
+    setNepoToast(`Budget locked at ${formatMoney(amount)}. Your account officer can breathe now 😌`)
+  }
+
+  function skipBudget() {
+    setSpendLimit(0)
+    setShowBudgetPrompt(false)
+    setNepoToast('Nepo mode verified 😂 No budget, just vibes — but the ₦15k gift challenge is still on!')
+  }
+
+  function ignoreSpendLimit() {
+    setLimitIgnored(true)
+    setLimitExceededPrompt(false)
+    setNepoToast('Limit ignored. Omo, you chose enjoyment 😅 Gift-challenge eligibility is now off for this trip.')
+  }
 
   async function startNativeBarcodeScanner(stream) {
     if (!('BarcodeDetector' in window) || !videoRef.current) return false
@@ -5361,6 +5427,7 @@ function CustomerCheckout({ qrCode }) {
 
   async function checkout() {
     noteActivity(true)
+    let challengeAllowed = !limitIgnored
     if (pendingPayment?.receiptToken) {
       await recoverPendingPayment()
       return
@@ -5369,13 +5436,15 @@ function CustomerCheckout({ qrCode }) {
       setMessage(geofenceState === 'outside' ? 'You are outside this store’s shopping area.' : 'Enable precise location to checkout in this store.')
       return
     }
-    if (spendLimit > 0 && total > spendLimit) {
+    if (spendLimit > 0 && total > spendLimit && !limitIgnored) {
       const continueOverLimit = await requestConfirmation({
         title: 'You are over your spend limit',
         message: `Your cart is ${formatMoney(total - spendLimit)} above your limit. Do you still want to continue to payment?`,
         confirmLabel: 'Continue to payment',
       })
       if (!continueOverLimit) return
+      challengeAllowed = false
+      setLimitIgnored(true)
     }
     const confirmed = await requestConfirmation({
       title: 'Ready to pay?',
@@ -5394,6 +5463,8 @@ function CustomerCheckout({ qrCode }) {
           shopperSessionId,
           location: shopperLocation,
           customerEmail,
+          challengeEnabled: challengeAllowed,
+          spendLimit: spendLimit || null,
           cart: cart.map((item) => ({ productId: item.id, quantity: item.cartQuantity })),
         },
         false,
@@ -5461,18 +5532,24 @@ function CustomerCheckout({ qrCode }) {
           className="guide-backdrop"
           role="dialog"
           aria-modal="true"
-          onClick={() => setShowIntro(false)}
+          onClick={finishShopperIntro}
         >
           <section className="guide-modal" onClick={(event) => event.stopPropagation()}>
             <p className="eyebrow">Welcome to Glide</p>
             <h1>Scan products and checkout faster.</h1>
             <p className="lead">Glide seamlessly through the store, pay on your device and show your receipt at the exit.</p>
-            <button type="button" onClick={() => setShowIntro(false)}>
+            <button type="button" onClick={finishShopperIntro}>
               Start shopping
             </button>
           </section>
         </div>
       ) : null}
+
+      {showBudgetPrompt ? <div className="guide-backdrop" role="dialog" aria-modal="true"><section className="guide-modal budget-prompt-card"><p className="eyebrow">Before temptation starts</p><h1>How much are we spending today?</h1><p className="lead">Set a personal limit and Glide will warn you when the basket crosses it. Or cancel and activate full “Nepo mode” 😂</p><label>Shopping limit<div className="budget-input"><span>₦</span><input autoFocus inputMode="decimal" min="100" placeholder="e.g. 20,000" type="number" value={budgetDraft} onChange={(event) => setBudgetDraft(event.target.value)} /></div></label><div className="app-dialog-actions"><button type="button" onClick={skipBudget}>Cancel — no limit</button><button type="button" onClick={activateBudget}>Enter limit</button></div></section></div> : null}
+
+      {limitExceededPrompt ? <div className="guide-backdrop" role="alertdialog" aria-modal="true"><section className="guide-modal limit-alert-card"><p className="eyebrow">Budget don red 🚨</p><h1>You’ve crossed your limit.</h1><p className="lead">Your basket is {formatMoney(total - spendLimit)} above the {formatMoney(spendLimit)} limit. Remove something to stay disciplined, or continue and leave the gift challenge.</p><div className="app-dialog-actions"><button type="button" onClick={() => { setLimitExceededPrompt(false); setActiveTab('cart') }}>Review my cart</button><button className="danger" type="button" onClick={ignoreSpendLimit}>Ignore limit</button></div></section></div> : null}
+
+      {nepoToast ? <div className="nepo-toast" role="status"><span>{nepoToast}</span><button type="button" aria-label="Dismiss notification" onClick={() => setNepoToast('')}>×</button></div> : null}
 
       {showHelp ? (
         <div
@@ -5563,14 +5640,19 @@ function CustomerCheckout({ qrCode }) {
             placeholder="Set limit"
             type="number"
             value={spendLimit || ''}
-            onChange={(event) => setSpendLimit(Math.max(0, Number(event.target.value) || 0))}
+            onChange={(event) => { setSpendLimit(Math.max(0, Number(event.target.value) || 0)); setLimitIgnored(false); limitAlertedRef.current = false }}
           />
         </label>
         {spendLimit > 0 ? <div className="spend-progress"><span style={{ width: `${Math.min(100, (total / spendLimit) * 100)}%` }} /></div> : null}
       </section>
 
+      <section className={`shopping-challenge-card ${challengeQualified ? 'complete' : ''} ${limitIgnored ? 'disabled' : ''}`}>
+        <div><span>{challengeQualified ? 'Challenge complete 🎉' : limitIgnored ? 'Challenge paused' : 'Today’s basket challenge'}</span><strong>{challengeQualified ? 'Free-gift claim unlocked!' : `Reach ${formatMoney(challengeTarget)}`}</strong><small>{challengeQualified ? 'Complete payment and show your verified receipt at the counter to claim the participating-store gift.' : limitIgnored ? 'Ignoring your spend warning ended eligibility for this trip.' : `${formatMoney(Math.max(0, challengeTarget - total))} to go. No shortcuts, abeg 😄`}</small></div>
+        <div className="challenge-progress"><span style={{ width: `${Math.min(100, (total / challengeTarget) * 100)}%` }} /></div>
+      </section>
+
       {networkWarning ? <Notice tone="warning">{networkWarning}</Notice> : null}
-      {store?.merchant_profile?.geofence_enabled ? (
+      {store?.merchant_profile?.geofence_enabled && geofenceState !== 'inside' ? (
         <section className={`shopper-location-card ${geofenceState}`} role="status">
           <div className="shopper-location-icon" aria-hidden="true">{geofenceState === 'inside' ? '✓' : '⌖'}</div>
           <div><span>Store location check</span><strong>{geofenceState === 'inside' ? 'You’re inside the shopping area' : geofenceState === 'outside' ? 'You’re outside the shopping area' : geofenceState === 'checking' ? 'Checking your location…' : 'Location access is required'}</strong><small>{locationMessage || 'Glide uses your location only to confirm that you are physically at this store.'}</small></div>
@@ -6085,6 +6167,7 @@ function ReceiptPage({ token }) {
             {isVerified ? '✓ Verified' : 'Verification pending'}
           </span>
         </div>
+        {order.challenge_qualified ? <div className="receipt-gift-badge"><span>🎁 Basket challenge complete</span><strong>Show this verified receipt at the counter to claim the participating-store gift.</strong></div> : null}
         <div className="receipt-items-panel">
           <SimpleList
             rows={order.order_items.map((item) => ({
@@ -6152,7 +6235,7 @@ function PaymentVerifierLegacy() {
   }
 
   useRealtimeRefresh('verify-receipt-live', ['orders'], () => {
-    if (code.trim()) verifyCode(code)
+    if (code.trim() && (!order || order.payment_status !== 'paid')) verifyCode(code)
   })
 
   async function markExited() {
@@ -6231,7 +6314,7 @@ function PaymentVerifierLegacy() {
   )
 }
 
-function PaymentVerifier() {
+function PaymentVerifier({ station = 'security', compact = false }) {
   const [code, setCode] = useState('')
   const [order, setOrder] = useState(null)
   const [message, setMessage] = useState('')
@@ -6260,9 +6343,9 @@ function PaymentVerifier() {
     try {
       let result
       try {
-        result = await callFunction('cashier-terminal', { action: 'verify-receipt', receiptCode: query, station: 'security' })
+        result = await callFunction('cashier-terminal', { action: 'verify-receipt', receiptCode: query, station })
       } catch {
-        result = await callFunction('cashier-terminal', { action: 'lookup-transaction', query, station: 'security' })
+        result = await callFunction('cashier-terminal', { action: 'lookup-transaction', query, station })
       }
       setOrder(result.order)
       resetInspection(result.order)
@@ -6271,7 +6354,7 @@ function PaymentVerifier() {
     } finally {
       setBusy(false)
     }
-  }, [resetInspection])
+  }, [resetInspection, station])
 
   async function verify(event) {
     event.preventDefault()
@@ -6279,7 +6362,7 @@ function PaymentVerifier() {
   }
 
   useRealtimeRefresh('verify-receipt-live', ['orders'], () => {
-    if (code.trim()) verifyCode(code)
+    if (code.trim() && (!order || order.payment_status !== 'paid')) verifyCode(code)
   })
 
   const items = order?.order_items || []
@@ -6299,7 +6382,7 @@ function PaymentVerifier() {
     setMessage('')
     try {
       const result = await callFunction('cashier-terminal', {
-        action: 'burn-receipt', receiptCode: order.exit_token, station: 'security',
+        action: 'burn-receipt', receiptCode: order.exit_token, station,
         outcome: mismatchMode ? 'mismatch' : 'matched', reasonCodes, checkedItems: inspected,
         incidentNote, balanceCollected: Number(balanceCollected) || 0,
         balancePaymentMethod: Number(balanceCollected) > 0 ? balancePaymentMethod : '',
@@ -6315,7 +6398,7 @@ function PaymentVerifier() {
 
   return (
     <section className="dash-section payment-verifier">
-      <PageTitle title="Exit verification" subtitle="Scan a receipt, inspect every item, then record the outcome once." />
+      <PageTitle title={compact ? 'Verify shopper payment' : 'Exit verification'} subtitle="Scan or search a paid receipt, inspect every item, then record the outcome once." />
       <div className="verification-guide">
         <div><span>1</span><strong>Find transaction</strong><small>Receipt code, reference or email.</small></div>
         <div><span>2</span><strong>Inspect basket</strong><small>Tick each physical item.</small></div>
@@ -6330,6 +6413,7 @@ function PaymentVerifier() {
         <section className={`security-manifest ${used ? 'used' : ''}`}>
           <header className={`verification-status ${used ? 'used' : paid ? 'paid' : 'pending'}`}><div><span>{statusLabel}</span><h2>{order.order_number}</h2></div><strong>{itemCount} items</strong></header>
           <SimpleList rows={[{ label: 'Payment', value: order.payment_status }, { label: 'Verification', value: used ? order.verification_outcome || 'closed' : 'open' }, { label: 'Total', value: formatMoney(order.total_amount) }]} />
+          {order.challenge_qualified ? <Notice tone="success">🎁 Gift challenge qualified — direct the shopper to the counter after verification.</Notice> : null}
           <div className="audit-list verification-checklist">
             {items.map((item) => (
               <button className={`${Number(item.line_total) >= 10000 ? 'high-value' : ''} ${checkedItems[item.id] ? 'checked' : ''}`} disabled={!paid || used} key={item.id} type="button" onClick={() => setCheckedItems((current) => ({ ...current, [item.id]: !current[item.id] }))}>
