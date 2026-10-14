@@ -1286,6 +1286,7 @@ function MerchantDashboardRoute({ path, session }) {
 
   if (path === '/dash') return <AppShell session={session} main={<Dashboard />} />
   if (path === '/dash/products') return <AppShell session={session} main={<Products />} />
+  if (path === '/dash/stock') return <AppShell session={session} main={<SmartStock />} />
   if (path === '/dash/smart-add') return <AppShell session={session} main={<SmartAddDashboard />} />
   if (path === '/dash/import') return <AppShell session={session} main={<CsvImport />} />
   if (path === '/dash/qr') return <AppShell session={session} main={<QrPage />} />
@@ -1626,6 +1627,7 @@ function AppShell({ session, main }) {
     { href: '/dash', label: 'Overview', icon: 'grid' },
     { href: '/dash/orders', label: 'Orders', icon: 'receipt' },
     { href: '/dash/products', label: 'Inventory', icon: 'box' },
+    { href: '/dash/stock', label: 'Smart Stock', icon: 'stock' },
     { href: '/dash/qr', label: 'Store QR', icon: 'qr' },
     { href: '/dash/staff', label: 'Team', icon: 'team' },
     { href: '/cashier', label: 'Cashier', icon: 'terminal' },
@@ -2679,6 +2681,163 @@ function ProductIntakePhone({ token }) {
   )
 }
 
+function SmartStock() {
+  const [mode, setMode] = useState('receive')
+  const [barcode, setBarcode] = useState('')
+  const [reason, setReason] = useState('')
+  const [queue, setQueue] = useState([])
+  const [message, setMessage] = useState('Ready to scan.')
+  const [busy, setBusy] = useState(false)
+  const [lastBatch, setLastBatch] = useState([])
+  const [catalog, setCatalog] = useState([])
+  const scanInputRef = useRef(null)
+
+  const loadCatalog = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('products')
+      .select('id,name,barcode,sku,quantity,track_inventory,unit_label,pack_label,units_per_pack')
+      .eq('track_inventory', true)
+
+    if (error) {
+      setMessage(error.message)
+      return
+    }
+    setCatalog(data || [])
+  }, [])
+
+  useEffect(() => {
+    loadCatalog()
+  }, [loadCatalog])
+
+  useEffect(() => {
+    function shortcuts(event) {
+      if (!event.altKey) return
+      if (event.key === '1') setMode('receive')
+      if (event.key === '2') setMode('remove')
+      if (event.key === '3') setMode('count')
+      scanInputRef.current?.focus()
+    }
+    window.addEventListener('keydown', shortcuts)
+    return () => window.removeEventListener('keydown', shortcuts)
+  }, [])
+
+  function addToQueue(product) {
+    setQueue((current) => {
+      const existing = current.find((item) => item.product.id === product.id && item.operation === mode)
+      if (existing && mode !== 'count') {
+        return current.map((item) => item === existing ? { ...item, quantity: item.quantity + 1 } : item)
+      }
+      if (existing) return current
+      return [{ product, operation: mode, quantity: mode === 'count' ? Number(product.quantity) : 1 }, ...current]
+    })
+  }
+
+  function scan(event) {
+    event.preventDefault()
+    const cleanBarcode = barcode.trim()
+    if (!cleanBarcode || busy) return
+
+    const product = catalog.find((item) => item.barcode === cleanBarcode)
+    if (!product) {
+      setMessage(`No tracked product matches ${cleanBarcode}.`)
+      setBarcode('')
+      return
+    }
+
+    addToQueue(product)
+    setBarcode('')
+    setMessage(mode === 'count' ? `${product.name} added. Enter the counted quantity.` : `${product.name} added. Scan again to increase by one.`)
+  }
+
+  function updateQuantity(index, quantity) {
+    const cleanQuantity = Math.max(0, Math.floor(Number(quantity) || 0))
+    setQueue((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, quantity: cleanQuantity } : item))
+  }
+
+  async function applyBatch() {
+    if (!queue.length || busy) return
+    if (queue.some((item) => item.operation !== 'count' && item.quantity < 1)) {
+      setMessage('Receive and remove quantities must be at least one.')
+      return
+    }
+    setBusy(true)
+    setMessage('Applying stock changes...')
+    try {
+      const result = await callFunction('inventory-adjust', {
+        action: 'apply',
+        adjustments: queue.map((item) => ({ productId: item.product.id, operation: item.operation, quantity: item.quantity, reason })),
+      })
+      setLastBatch(result.updates || [])
+      setQueue([])
+      setReason('')
+      setMessage(`${result.updates?.length || 0} products updated successfully.`)
+      await loadCatalog()
+    } catch (error) {
+      setMessage(error.message || 'Stock changes could not be applied.')
+    } finally {
+      setBusy(false)
+      window.setTimeout(() => scanInputRef.current?.focus(), 0)
+    }
+  }
+
+  const unitTotal = queue.reduce((sum, item) => sum + (item.operation === 'count' ? 0 : item.quantity), 0)
+
+  return (
+    <section className="dash-section smart-stock-page">
+      <PageTitle title="Smart Stock" subtitle="Scan products into a batch and update the entire delivery or count in one step." />
+      <div className="stock-mode-switch" aria-label="Stock operation">
+        {[
+          ['receive', 'Receive stock', 'Alt + 1'],
+          ['remove', 'Remove stock', 'Alt + 2'],
+          ['count', 'Stock count', 'Alt + 3'],
+        ].map(([value, label, shortcut]) => (
+          <button className={mode === value ? 'active' : ''} key={value} type="button" onClick={() => { setMode(value); scanInputRef.current?.focus() }}>
+            <strong>{label}</strong><span>{shortcut}</span>
+          </button>
+        ))}
+      </div>
+      <div className="smart-stock-grid">
+        <section className="stock-scan-card">
+          <span className="eyebrow">Rapid entry</span>
+          <h2>{mode === 'receive' ? 'Scan incoming items' : mode === 'remove' ? 'Scan items leaving stock' : 'Scan and enter shelf count'}</h2>
+          <form onSubmit={scan}>
+            <input autoFocus autoComplete="off" ref={scanInputRef} placeholder="Scan barcode, then press Enter" value={barcode} onChange={(event) => setBarcode(event.target.value)} />
+            <button disabled={busy || !barcode.trim()} type="submit">Add</button>
+          </form>
+          <p className="stock-scan-message" aria-live="polite">{message}</p>
+          <div className="stock-speed-tip"><strong>Speed tip</strong><span>Repeated scans increase the same product. Review once, then apply the batch.</span></div>
+        </section>
+        <aside className="stock-batch-summary">
+          <span>Current batch</span><strong>{queue.length}</strong>
+          <small>{queue.length === 1 ? 'product' : 'products'} · {unitTotal} units moved</small>
+          <label>Reference or reason<input placeholder="Delivery note, damage, shelf count..." value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+          <button disabled={busy || !queue.length} type="button" onClick={applyBatch}>{busy ? 'Working...' : `Apply ${queue.length || ''} changes`}</button>
+        </aside>
+      </div>
+      <section className="stock-queue-card">
+        <header><div><span className="eyebrow">Review</span><h2>Pending changes</h2></div>{queue.length ? <button type="button" onClick={() => setQueue([])}>Clear batch</button> : null}</header>
+        {queue.length ? (
+          <div className="stock-queue-list">
+            {queue.map((item, index) => (
+              <article key={`${item.product.id}-${item.operation}`}>
+                <div><strong>{item.product.name}</strong><span>{item.product.barcode} · {item.product.quantity} currently in stock</span></div>
+                <StatusPill tone={item.operation === 'remove' ? 'warning' : item.operation === 'count' ? 'neutral' : 'success'}>{item.operation}</StatusPill>
+                <div className="stock-quantity-control">
+                  <button type="button" onClick={() => updateQuantity(index, item.quantity - 1)}>−</button>
+                  <input aria-label={`Quantity for ${item.product.name}`} min={item.operation === 'count' ? 0 : 1} type="number" value={item.quantity} onChange={(event) => updateQuantity(index, event.target.value)} />
+                  <button type="button" onClick={() => updateQuantity(index, item.quantity + 1)}>+</button>
+                </div>
+                <button className="stock-remove-line" type="button" onClick={() => setQueue((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button>
+              </article>
+            ))}
+          </div>
+        ) : <div className="stock-empty-state"><strong>No pending changes</strong><span>Your scanned products will appear here.</span></div>}
+      </section>
+      {lastBatch.length ? <section className="stock-complete-card"><strong>Last batch completed</strong><span>{lastBatch.map((item) => `${item.name}: ${item.previousQuantity} → ${item.quantity}`).join(' · ')}</span></section> : null}
+    </section>
+  )
+}
+
 function Products() {
   const pageSize = 100
   const [products, setProducts] = useState([])
@@ -2788,6 +2947,9 @@ function Products() {
       <div className="inventory-heading">
         <PageTitle title="Products" subtitle="Manage stock, prices, barcodes and availability." />
         <div className="inventory-actions">
+          <Link className="primary-action" href="/dash/stock">
+            Update stock
+          </Link>
           <button type="button" onClick={openAddProduct}>
             Add product
           </button>
