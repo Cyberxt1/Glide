@@ -216,6 +216,8 @@ function App() {
   const receiptMatch = path.match(/^\/receipt\/([^/]+)$/)
   if (receiptMatch) return <ReceiptPage token={receiptMatch[1]} />
 
+  if (path === '/shopper') return <ShopperSessionEnded />
+
   const shopperMatch = path.match(/^\/shopper\/([^/]+)$/)
   if (shopperMatch) return <ShopperLanding receiptToken={shopperMatch[1]} />
 
@@ -2148,9 +2150,9 @@ function SmartAddDashboard() {
     if (showLoading) setState((current) => ({ ...current, loading: true, error: '' }))
     try {
       const data = await callFunction('smart-add', { action: 'list-links' })
-      setState({ loading: false, links: data.links || [], error: '', created: null })
+      setState((current) => ({ ...current, loading: false, links: data.links || [], error: '' }))
     } catch (error) {
-      setState({ loading: false, links: [], error: smartAddErrorMessage(error), created: null })
+      setState((current) => ({ ...current, loading: false, error: smartAddErrorMessage(error) }))
     }
   }, [])
 
@@ -2206,9 +2208,10 @@ function SmartAddDashboard() {
             <button type="button" onClick={() => copyLink(state.created.url)}>
               Copy link
             </button>
-            <a className="secondary-action" href={`https://wa.me/?text=${encodeURIComponent(state.created.url)}`}>
+            <a className="secondary-action" href={`https://wa.me/?text=${encodeURIComponent(`Use this secure Glide Smart Add link to scan products: ${state.created.url}`)}`} target="_blank" rel="noreferrer">
               Send on WhatsApp
             </a>
+            <button className="secondary-action" type="button" onClick={() => setState((current) => ({ ...current, created: null }))}>Done</button>
           </div>
         </Panel>
       ) : null}
@@ -5169,7 +5172,7 @@ function CustomerCheckout({ qrCode }) {
     sessionIdRef.current = ''
     setShopperSessionId('')
     setSessionEnded(true)
-    if (reason === 'manual') window.close()
+    if (reason === 'manual') window.location.replace('/shopper')
   }
 
   function requestConfirmation(options) {
@@ -5195,9 +5198,10 @@ function CustomerCheckout({ qrCode }) {
     const confirmed = await requestConfirmation({
       title: hasUnpaidCart ? 'End without paying?' : 'End this session?',
       message: hasUnpaidCart
-        ? `Your ${cartRef.current.length} unpaid cart item${cartRef.current.length === 1 ? '' : 's'} will be removed and cannot be recovered.`
-        : 'Your shopping session and local data will be cleared.',
-      confirmLabel: hasUnpaidCart ? 'End without paying' : 'End session',
+        ? `You have ${cartRef.current.length} unpaid cart item${cartRef.current.length === 1 ? '' : 's'}. Ending now permanently clears this cart and closes the store session. No payment will be taken. You will return to the shopper home page.`
+        : 'Ending closes this store session, stops the scanner and clears shopping data from this device. You will return to the shopper home page and can scan a store QR whenever you want to shop again.',
+      confirmLabel: hasUnpaidCart ? 'Clear cart and end' : 'Yes, end session',
+      cancelLabel: 'Continue shopping',
     })
     if (confirmed) endSession('manual')
   }
@@ -5766,6 +5770,27 @@ function PaymentReturn({ receiptToken }) {
     <main className="payment-page">
       {state.loading ? <LoadingRows /> : null}
       {state.error ? <Notice tone="error">{state.error}</Notice> : null}
+    </main>
+  )
+}
+
+function ShopperSessionEnded() {
+  return (
+    <main className="shopper-home shopper-session-home">
+      <nav><Link className="brand" href="/">Glide</Link><span>Shopper home</span></nav>
+      <section className="shopper-welcome">
+        <div className="shopper-success-mark" aria-hidden="true">✓</div>
+        <p className="eyebrow">Session safely closed</p>
+        <h1>You’re no longer connected to the store.</h1>
+        <p>Your scanner has stopped and the cart and local shopping data for that session have been cleared. No payment was taken for unpaid items.</p>
+        <div className="shopper-welcome-actions">
+          <Link className="primary-action" href="/">Go to Glide home</Link>
+          <span>To shop again, scan the QR displayed at a Glide-enabled store.</span>
+        </div>
+      </section>
+      <section className="shopper-after-grid">
+        <article className="shopper-feedback-card"><p className="eyebrow">What happens next</p><h2>Ready whenever you are.</h2><SimpleList rows={[{ label: 'Cart', value: 'Cleared' }, { label: 'Store session', value: 'Closed' }, { label: 'Payment', value: 'None taken' }, { label: 'Shop again', value: 'Scan a store QR' }]} /></article>
+      </section>
     </main>
   )
 }
