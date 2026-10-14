@@ -1999,6 +1999,8 @@ function Dashboard() {
 }
 
 async function loadDashboardSummaryFromClient() {
+  const { data: authData } = await supabase.auth.getUser()
+  if (!authData.user) throw new Error('Your session has expired.')
   const start = new Date()
   start.setHours(0, 0, 0, 0)
   const end = new Date(start)
@@ -2041,6 +2043,7 @@ async function loadDashboardSummaryFromClient() {
     supabase
       .from('merchant_profile')
       .select('store_name,branch_name')
+      .eq('user_id', authData.user.id)
       .maybeSingle(),
   ])
 
@@ -3295,9 +3298,15 @@ function StaffManagement() {
 
   const loadStaff = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true)
+    const { data: authData } = await supabase.auth.getUser()
+    if (!authData.user) {
+      setLoading(false)
+      setMessage('Your session has expired.')
+      return
+    }
     const [staffResult, profileResult] = await Promise.all([
       supabase.from('staff_members').select('*').order('created_at', { ascending: false }),
-      supabase.from('merchant_profile').select('store_name,branch_name,terminal_auth_code').maybeSingle(),
+      supabase.from('merchant_profile').select('store_name,branch_name,terminal_auth_code').eq('user_id', authData.user.id).maybeSingle(),
     ])
     const { data, error } = staffResult
 
@@ -3912,16 +3921,35 @@ function CsvImport() {
 
 function QrPage() {
   const [qr, setQr] = useState(null)
+  const [merchantId, setMerchantId] = useState('')
   const [image, setImage] = useState('')
   const [loading, setLoading] = useState(true)
+  const [qrBusy, setQrBusy] = useState(false)
   const [message, setMessage] = useState('')
 
   const loadQr = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true)
+    setMessage('')
+    const { data: authData } = await supabase.auth.getUser()
+    if (!authData.user) {
+      setLoading(false)
+      setMessage('Your session has expired. Sign in again to manage the store QR.')
+      return
+    }
+    const profileResult = await supabase.from('merchant_profile').select('id').eq('user_id', authData.user.id).maybeSingle()
+    if (profileResult.error || !profileResult.data) {
+      setLoading(false)
+      setMessage(profileResult.error?.message || 'Store profile not found.')
+      return
+    }
+    setMerchantId(profileResult.data.id)
     const { data, error } = await supabase
       .from('qr_codes')
       .select('*')
+      .eq('merchant_id', profileResult.data.id)
       .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle()
 
     if (showLoading) setLoading(false)
@@ -3944,14 +3972,28 @@ function QrPage() {
   useRealtimeRefresh('qr-live', ['qr_codes'], () => loadQr(false))
 
   async function regenerate() {
-    const newCode = crypto.randomUUID().replaceAll('-', '').slice(0, 16)
-    await supabase.from('qr_codes').update({ is_active: false }).eq('is_active', true)
-    const { error } = await supabase.from('qr_codes').insert({ qr_code: newCode, is_active: true })
-    if (error) {
-      setMessage(error.message)
+    if (qrBusy) return
+    if (!merchantId) {
+      setMessage('Store profile is still loading. Refresh the page and try again.')
       return
     }
-    loadQr(false)
+    setQrBusy(true)
+    setMessage('')
+    const newCode = crypto.randomUUID().replaceAll('-', '').slice(0, 16)
+    const retired = await supabase.from('qr_codes').update({ is_active: false, disabled_at: new Date().toISOString() }).eq('merchant_id', merchantId).eq('is_active', true)
+    if (retired.error) {
+      setMessage(retired.error.message)
+      setQrBusy(false)
+      return
+    }
+    const { error } = await supabase.from('qr_codes').insert({ merchant_id: merchantId, qr_code: newCode, is_active: true })
+    if (error) {
+      setMessage(error.message)
+      setQrBusy(false)
+      return
+    }
+    await loadQr(false)
+    setQrBusy(false)
   }
 
   function printQr() {
@@ -3975,16 +4017,16 @@ function QrPage() {
             <button type="button" onClick={printQr}>
               Print QR
             </button>
-            <button type="button" onClick={regenerate}>
-              Regenerate QR
+            <button disabled={qrBusy} type="button" onClick={regenerate}>
+              {qrBusy ? 'Creating…' : 'Regenerate QR'}
             </button>
           </div>
         </div>
       ) : (
         <div className="action-row">
           <EmptyState>No active QR exists yet.</EmptyState>
-          <button type="button" onClick={regenerate}>
-            Create active QR
+          <button disabled={qrBusy || !merchantId} type="button" onClick={regenerate}>
+            {qrBusy ? 'Creating…' : 'Create active QR'}
           </button>
         </div>
       )}
@@ -5731,17 +5773,16 @@ function LocationSettings() {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    supabase
-      .from('merchant_profile')
-      .select('id,geofence_latitude,geofence_longitude,geofence_radius_meters,geofence_enabled')
-      .maybeSingle()
-      .then(({ data, error }) => {
+    supabase.auth.getUser().then(({ data: authData }) => {
+      if (!authData.user) return { data: null, error: new Error('Your session has expired.') }
+      return supabase.from('merchant_profile').select('id,geofence_latitude,geofence_longitude,geofence_radius_meters,geofence_enabled').eq('user_id', authData.user.id).maybeSingle()
+    }).then(({ data, error }) => {
         if (error) setMessage(error.message)
         if (data) {
           setMerchantId(data.id)
           setSettings({ latitude: data.geofence_latitude ?? '', longitude: data.geofence_longitude ?? '', radius: data.geofence_radius_meters || 150, enabled: Boolean(data.geofence_enabled) })
         }
-      })
+    })
   }, [])
 
   function captureLocation() {
@@ -6466,7 +6507,10 @@ function VerificationSettings() {
   const [busy, setBusy] = useState(true)
 
   useEffect(() => {
-    supabase.from('merchant_profile').select('id,verification_mode,verification_threshold,random_audit_percent,mismatch_tolerance,vat_percent,receipt_footer,operating_hours').maybeSingle().then(({ data, error }) => {
+    supabase.auth.getUser().then(({ data: authData }) => {
+      if (!authData.user) return { data: null, error: new Error('Your session has expired.') }
+      return supabase.from('merchant_profile').select('id,verification_mode,verification_threshold,random_audit_percent,mismatch_tolerance,vat_percent,receipt_footer,operating_hours').eq('user_id', authData.user.id).maybeSingle()
+    }).then(({ data, error }) => {
       if (data) {
         setMerchantId(data.id)
         setSettings((current) => ({ ...current, verification_mode: data.verification_mode, verification_threshold: data.verification_threshold, random_audit_percent: data.random_audit_percent, mismatch_tolerance: data.mismatch_tolerance, vat_percent: data.vat_percent, receipt_footer: data.receipt_footer, operating_hours: typeof data.operating_hours === 'string' ? data.operating_hours : data.operating_hours?.note || '' }))
