@@ -12,6 +12,25 @@ function sameText(left, right) {
   return clean(left).toLowerCase() === clean(right).toLowerCase()
 }
 
+async function findReceipt(supabase, merchantId, credential, fields = '*,order_items(*)') {
+  const byAuthenticationCode = await supabase
+    .from('orders')
+    .select(fields)
+    .eq('merchant_id', merchantId)
+    .eq('exit_token', credential)
+    .maybeSingle()
+
+  if (byAuthenticationCode.error || byAuthenticationCode.data) return byAuthenticationCode
+
+  // Existing receipts used the internal receipt token as their barcode.
+  return supabase
+    .from('orders')
+    .select(fields)
+    .eq('merchant_id', merchantId)
+    .eq('receipt_token', credential)
+    .maybeSingle()
+}
+
 async function touchStaff(supabase, staff, station) {
   if (!staff?.id) return
   await supabase
@@ -69,16 +88,11 @@ export async function handler(event) {
     }
 
     if (body.action === 'verify-receipt') {
-      const receiptToken = clean(body.receiptToken)
-      if (!receiptToken) return bad('Receipt token is required.')
+      const receiptCode = clean(body.receiptCode || body.receiptToken)
+      if (!receiptCode) return bad('Receipt authentication code is required.')
       await touchStaff(supabase, access.staff, clean(body.station) || 'cashier')
 
-      const order = await supabase
-        .from('orders')
-        .select('*,order_items(*)')
-        .eq('merchant_id', access.merchant.id)
-        .eq('receipt_token', receiptToken)
-        .maybeSingle()
+      const order = await findReceipt(supabase, access.merchant.id, receiptCode)
 
       if (order.error) return bad(order.error.message)
       if (!order.data) return bad('Receipt not found.', 404)
@@ -88,16 +102,16 @@ export async function handler(event) {
     }
 
     if (body.action === 'burn-receipt') {
-      const receiptToken = clean(body.receiptToken)
-      if (!receiptToken) return bad('Receipt token is required.')
+      const receiptCode = clean(body.receiptCode || body.receiptToken)
+      if (!receiptCode) return bad('Receipt authentication code is required.')
       await touchStaff(supabase, access.staff, clean(body.station) || 'security')
 
-      const order = await supabase
-        .from('orders')
-        .select('id,status,payment_status')
-        .eq('merchant_id', access.merchant.id)
-        .eq('receipt_token', receiptToken)
-        .maybeSingle()
+      const order = await findReceipt(
+        supabase,
+        access.merchant.id,
+        receiptCode,
+        'id,status,payment_status',
+      )
 
       if (order.error) return bad(order.error.message)
       if (!order.data) return bad('Receipt not found.', 404)

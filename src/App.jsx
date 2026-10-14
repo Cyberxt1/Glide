@@ -5312,13 +5312,13 @@ function ReceiptPage({ token }) {
   }, [order, token])
 
   useEffect(() => {
-    if (!order?.receipt_token || !receiptBarcodeRef.current) return
+    if (!order?.exit_token || !receiptBarcodeRef.current) return
 
     async function renderBarcode() {
       const { default: JsBarcode } = await import('jsbarcode')
       if (!receiptBarcodeRef.current) return
 
-      JsBarcode(receiptBarcodeRef.current, order.receipt_token, {
+      JsBarcode(receiptBarcodeRef.current, order.exit_token, {
         format: 'CODE128',
         width: 1.35,
         height: 64,
@@ -5354,14 +5354,13 @@ function ReceiptPage({ token }) {
           rows={[
             { label: 'Payment status', value: order.payment_status },
             { label: 'Receipt email', value: order.customer_email || 'Not provided' },
-            { label: 'Receipt token', value: order.receipt_token },
-            { label: 'Exit token', value: order.exit_token },
+            { label: 'Authentication code', value: order.exit_token },
           ]}
         />
         <div className="receipt-barcode-panel">
           <span>Scan to verify receipt</span>
-          <svg ref={receiptBarcodeRef} aria-label="Receipt barcode" />
-          <strong>{order.receipt_token}</strong>
+          <svg ref={receiptBarcodeRef} aria-label="Receipt authentication barcode" />
+          <strong>{order.exit_token}</strong>
         </div>
         <div className="receipt-actions">
           <button type="button" onClick={() => window.print()}>
@@ -5378,18 +5377,18 @@ function ReceiptPage({ token }) {
 }
 
 function VerifyReceipt() {
-  const [token, setToken] = useState('')
+  const [code, setCode] = useState('')
   const [order, setOrder] = useState(null)
   const [message, setMessage] = useState('')
 
-  const verifyToken = useCallback(async (receiptToken) => {
+  const verifyCode = useCallback(async (receiptCode) => {
     setMessage('')
     setOrder(null)
 
     try {
       const result = await callFunction('cashier-terminal', {
         action: 'verify-receipt',
-        receiptToken: receiptToken.trim(),
+        receiptCode: receiptCode.trim(),
         station: 'security',
       })
       setOrder(result.order)
@@ -5400,11 +5399,11 @@ function VerifyReceipt() {
 
   async function verify(event) {
     event.preventDefault()
-    await verifyToken(token)
+    await verifyCode(code)
   }
 
   useRealtimeRefresh('verify-receipt-live', ['orders'], () => {
-    if (token.trim()) verifyToken(token)
+    if (code.trim()) verifyCode(code)
   })
 
   async function markExited() {
@@ -5414,7 +5413,7 @@ function VerifyReceipt() {
     try {
       const result = await callFunction('cashier-terminal', {
         action: 'burn-receipt',
-        receiptToken: order.receipt_token,
+        receiptCode: order.exit_token,
         station: 'security',
       })
       setOrder(result.order)
@@ -5432,12 +5431,12 @@ function VerifyReceipt() {
       <PageTitle title="Security scanner" subtitle="Scan a paid customer receipt, review all items and complete exit." />
       <form className="security-scanner" onSubmit={verify}>
         <label>
-          Receipt barcode
+          Receipt authentication code
           <input
             autoFocus
-            placeholder="Scan customer receipt"
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
+            placeholder="Scan or enter the 7-character code"
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
           />
         </label>
         <button type="submit">Scan</button>

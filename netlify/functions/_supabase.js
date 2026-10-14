@@ -37,6 +37,37 @@ export function token(size = 18) {
   return crypto.randomBytes(size).toString('hex')
 }
 
+const RECEIPT_CODE_GROUPS = [
+  'ABCDEFGHJKLMNPQRSTUVWXYZ',
+  'abcdefghijkmnopqrstuvwxyz',
+  '23456789',
+  '!#$%&*+-=?@^_',
+]
+const RECEIPT_CODE_ALPHABET = RECEIPT_CODE_GROUPS.join('')
+
+function randomCharacter(characters) {
+  return characters[crypto.randomInt(characters.length)]
+}
+
+/**
+ * Generate the short code printed and scanned at the store exit.
+ * Every code contains upper/lower-case letters, a number, and a symbol.
+ */
+export function receiptCode() {
+  const characters = RECEIPT_CODE_GROUPS.map(randomCharacter)
+
+  while (characters.length < 7) {
+    characters.push(randomCharacter(RECEIPT_CODE_ALPHABET))
+  }
+
+  for (let index = characters.length - 1; index > 0; index -= 1) {
+    const swapIndex = crypto.randomInt(index + 1)
+    ;[characters[index], characters[swapIndex]] = [characters[swapIndex], characters[index]]
+  }
+
+  return characters.join('')
+}
+
 export async function requireMerchant(event, supabase) {
   const auth = event.headers.authorization || event.headers.Authorization
   const jwt = auth?.replace('Bearer ', '')

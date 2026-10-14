@@ -1,4 +1,4 @@
-import { adminClient, json, requireMerchantOrStaff, token } from './_supabase.js'
+import { adminClient, json, receiptCode, requireMerchantOrStaff, token } from './_supabase.js'
 
 function bad(message) {
   return json(400, { error: message })
@@ -60,7 +60,7 @@ export async function handler(event) {
         payment_status: 'paid',
         total_amount: total,
         receipt_token: receiptToken,
-        exit_token: token(10),
+        exit_token: receiptCode(),
         paid_at: new Date().toISOString(),
       })
       .select('*')

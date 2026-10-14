@@ -1,4 +1,4 @@
-import { adminClient, json, token } from './_supabase.js'
+import { adminClient, json, receiptCode, token } from './_supabase.js'
 
 function bad(message) {
   return json(400, { error: message })
@@ -149,7 +149,7 @@ export async function handler(event) {
     if (total <= 0) return bad('Cart total must be greater than zero.')
 
     const receiptToken = token()
-    const exitToken = token(10)
+    const exitToken = receiptCode()
     const orderNumber = `G-${Date.now().toString().slice(-7)}`
 
     const orderResult = await supabase
