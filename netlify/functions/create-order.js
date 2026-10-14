@@ -143,8 +143,9 @@ export async function handler(event) {
         { latitude: shopperLatitude, longitude: shopperLongitude },
       )
       const allowedRadius = Number(storeProfile.geofence_radius_meters) || 150
-      if (distance - Math.min(accuracy, 100) > allowedRadius) {
-        return bad(`You are outside this store's shopping area (${Math.round(distance)} m away).`)
+      if (accuracy > 500) return bad('Your location is not accurate enough to verify this store. Enable precise location and try again.')
+      if (distance - Math.min(accuracy, 250) > allowedRadius) {
+        return bad(`You are outside this store's shopping area (${Math.round(distance)} m from the saved store point; ${allowedRadius} m allowed).`)
       }
     }
 

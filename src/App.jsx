@@ -3136,6 +3136,7 @@ function Products() {
             <ProductForm
               product={editing || emptyProduct}
               onDone={() => {
+                setMessage(editing ? 'Product updated and available to this store.' : 'Product added to this store inventory and is ready for shopper lookup.')
                 setEditing(null)
                 setFormOpen(false)
                 loadProducts()
@@ -4517,6 +4518,8 @@ function CustomerCheckout({ qrCode }) {
   const [confirmDialog, setConfirmDialog] = useState(null)
   const [shopperLocation, setShopperLocation] = useState(null)
   const [geofenceState, setGeofenceState] = useState('checking')
+  const [locationMessage, setLocationMessage] = useState('')
+  const [locationBusy, setLocationBusy] = useState(false)
   const [pendingPayment, setPendingPayment] = useState(() => readJsonStorage(`glide:pending-payment:${qrCode}`, null))
   const [paymentRecoveryState, setPaymentRecoveryState] = useState('idle')
   const [spendLimit, setSpendLimit] = useState(() => Number(localStorage.getItem(`glide:spend-limit:${qrCode}`)) || 0)
@@ -4638,26 +4641,72 @@ function CustomerCheckout({ qrCode }) {
     }
 
     if (!navigator.geolocation) {
-      setGeofenceState('blocked')
+      setGeofenceState('unsupported')
+      setLocationMessage('This browser does not support location. Open the store link in Chrome, Safari or Edge on a location-enabled device.')
       return undefined
     }
-
-    const watchId = navigator.geolocation.watchPosition(
-      ({ coords }) => {
-        const location = { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy }
-        const distance = distanceInMeters(
-          { latitude: Number(store.merchant_profile.geofence_latitude), longitude: Number(store.merchant_profile.geofence_longitude) },
-          location,
-        )
-        setShopperLocation(location)
-        setGeofenceState(distance - Math.min(coords.accuracy || 0, 100) <= Number(store.merchant_profile.geofence_radius_meters || 150) ? 'inside' : 'outside')
-      },
-      () => setGeofenceState('blocked'),
-      { enableHighAccuracy: true, maximumAge: 15000, timeout: 15000 },
-    )
-
-    return () => navigator.geolocation.clearWatch(watchId)
+    setGeofenceState('required')
+    navigator.permissions?.query?.({ name: 'geolocation' })?.then((permission) => {
+      if (permission.state === 'granted') requestShopperLocation(true)
+      if (permission.state === 'denied') {
+        setGeofenceState('blocked')
+        setLocationMessage('Location is blocked for this site. Allow precise location in your browser settings, then try again.')
+      }
+    })?.catch(() => {})
+    return undefined
+    // Location is intentionally requested from a visible user action when permission is not already granted.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [store])
+
+  function requestShopperLocation(automatic = false) {
+    if (!navigator.geolocation || !store?.merchant_profile?.geofence_enabled) return
+    if (!window.isSecureContext) {
+      setGeofenceState('blocked')
+      setLocationMessage('Location requires a secure HTTPS link. Open the published Glide store URL instead of an unsecured preview.')
+      return
+    }
+    const rawStoreLatitude = store.merchant_profile.geofence_latitude
+    const rawStoreLongitude = store.merchant_profile.geofence_longitude
+    const storeLatitude = Number(rawStoreLatitude)
+    const storeLongitude = Number(rawStoreLongitude)
+    if (rawStoreLatitude == null || rawStoreLongitude == null || !Number.isFinite(storeLatitude) || !Number.isFinite(storeLongitude)) {
+      setGeofenceState('unavailable')
+      setLocationMessage('This store’s shopping area is not configured correctly. Please ask a staff member for help.')
+      return
+    }
+    setLocationBusy(true)
+    setGeofenceState('checking')
+    setLocationMessage(automatic ? 'Refreshing your location…' : 'Waiting for precise location permission…')
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        const location = { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy, capturedAt: new Date().toISOString() }
+        const distance = distanceInMeters({ latitude: storeLatitude, longitude: storeLongitude }, location)
+        const allowedRadius = Number(store.merchant_profile.geofence_radius_meters || 150)
+        const accuracyBuffer = Math.min(Math.max(Number(coords.accuracy) || 0, 0), 250)
+        const inside = distance <= allowedRadius + accuracyBuffer
+        setShopperLocation(location)
+        if (Number(coords.accuracy) > 500) {
+          setGeofenceState('unavailable')
+          setLocationMessage(`Your location is only accurate to ±${Math.round(coords.accuracy)} m, so Glide cannot verify the store safely. Turn on precise location and Wi-Fi, then retry.`)
+        } else {
+          setGeofenceState(inside ? 'inside' : 'outside')
+          setLocationMessage(inside ? `Location confirmed: about ${Math.round(distance)} m from the store point with ±${Math.round(coords.accuracy || 0)} m device accuracy.` : `Your device places you about ${Math.round(distance)} m from the saved store point. This store allows ${allowedRadius} m, plus device accuracy. Ask the store to recapture its geofence if you are physically inside.`)
+        }
+        setLocationBusy(false)
+      },
+      (error) => {
+        const messages = {
+          1: 'Location permission was denied. Allow precise location for this site in your browser settings, then try again.',
+          2: 'Your device could not determine its location. Turn on Location Services, Wi-Fi or mobile data and try again.',
+          3: 'Location took too long. Move near a window or store entrance and try again.',
+        }
+        setGeofenceState(error.code === 1 ? 'blocked' : 'unavailable')
+        setLocationMessage(messages[error.code] || 'Location could not be confirmed. Check device location settings and try again.')
+        setLocationBusy(false)
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
+    )
+  }
 
   useEffect(
     () => () => {
@@ -4670,12 +4719,13 @@ function CustomerCheckout({ qrCode }) {
 
   useEffect(() => {
     if (!store || showSplash || activeTab !== 'scan' || sessionEnded) return
+    if (store.merchant_profile?.geofence_enabled && geofenceState !== 'inside') return
     if (cameraState !== 'idle' || autoCameraTriedRef.current) return
 
     autoCameraTriedRef.current = true
     startCamera({ automatic: true })
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, cameraState, sessionEnded, showSplash, store])
+  }, [activeTab, cameraState, geofenceState, sessionEnded, showSplash, store])
 
   useEffect(() => {
     cartRef.current = cart
@@ -4774,18 +4824,26 @@ function CustomerCheckout({ qrCode }) {
   async function addBarcodeFromValue(rawCode, source = 'manual') {
     setMessage('')
     noteActivity()
-    const code = String(rawCode || '').trim()
+    const code = cleanBarcodeText(rawCode)
     if (!code) return false
+    const barcodeCandidates = [...new Set([code, /^0\d{11,13}$/.test(code) ? code.slice(1) : '', /^\d{11,12}$/.test(code) ? `0${code}` : ''].filter(Boolean))]
 
     const { data, error } = await supabase
       .from('products')
-      .select(productColumns)
-      .eq('barcode', code)
+      .select('id,name,barcode,sku,category,price,quantity,low_stock_threshold,is_available,track_inventory,size,unit_label,pack_label,units_per_pack,pack_price,created_at')
+      .eq('merchant_id', store?.merchant_id)
+      .in('barcode', barcodeCandidates)
       .eq('is_available', true)
+      .limit(1)
       .maybeSingle()
 
-    if (error || !data) {
-      setMessage(source === 'camera' ? `No product found for ${code}.` : 'Product not found or unavailable.')
+    if (error) {
+      setMessage(`We could not check this store’s inventory. ${error.message}`)
+      setScanResult({ status: 'blocked', code, label: 'Inventory lookup unavailable' })
+      return false
+    }
+    if (!data) {
+      setMessage(source === 'camera' ? `Barcode ${code} is not active in this store’s inventory. Ask staff to confirm its barcode and availability.` : 'This barcode is not active in this store’s inventory.')
       setScanResult({ status: 'missing', code, label: 'No product found' })
       return false
     }
@@ -5470,10 +5528,12 @@ function CustomerCheckout({ qrCode }) {
       </section>
 
       {networkWarning ? <Notice tone="warning">{networkWarning}</Notice> : null}
-      {store?.merchant_profile?.geofence_enabled && geofenceState !== 'inside' ? (
-        <Notice tone="warning">
-          {geofenceState === 'outside' ? 'Shopping is locked because you are outside the store area.' : geofenceState === 'blocked' ? 'Location access is required. Enable precise location to shop.' : 'Checking that you are inside the store…'}
-        </Notice>
+      {store?.merchant_profile?.geofence_enabled ? (
+        <section className={`shopper-location-card ${geofenceState}`} role="status">
+          <div className="shopper-location-icon" aria-hidden="true">{geofenceState === 'inside' ? '✓' : '⌖'}</div>
+          <div><span>Store location check</span><strong>{geofenceState === 'inside' ? 'You’re inside the shopping area' : geofenceState === 'outside' ? 'You’re outside the shopping area' : geofenceState === 'checking' ? 'Checking your location…' : 'Location access is required'}</strong><small>{locationMessage || 'Glide uses your location only to confirm that you are physically at this store.'}</small></div>
+          {geofenceState !== 'inside' ? <button disabled={locationBusy || geofenceState === 'unsupported'} type="button" onClick={() => requestShopperLocation(false)}>{locationBusy ? 'Checking…' : geofenceState === 'blocked' ? 'Try location again' : 'Use my location'}</button> : <button className="secondary-action" disabled={locationBusy} type="button" onClick={() => requestShopperLocation(false)}>Refresh</button>}
+        </section>
       ) : null}
       {message ? <Notice tone="warning">{message}</Notice> : null}
 
@@ -5666,22 +5726,21 @@ function CustomerCheckout({ qrCode }) {
 
 function LocationSettings() {
   const [settings, setSettings] = useState({ latitude: '', longitude: '', radius: 150, enabled: false })
+  const [merchantId, setMerchantId] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     supabase
       .from('merchant_profile')
-      .select('geofence_latitude,geofence_longitude,geofence_radius_meters,geofence_enabled')
+      .select('id,geofence_latitude,geofence_longitude,geofence_radius_meters,geofence_enabled')
       .maybeSingle()
       .then(({ data, error }) => {
         if (error) setMessage(error.message)
-        if (data) setSettings({
-          latitude: data.geofence_latitude ?? '',
-          longitude: data.geofence_longitude ?? '',
-          radius: data.geofence_radius_meters || 150,
-          enabled: Boolean(data.geofence_enabled),
-        })
+        if (data) {
+          setMerchantId(data.id)
+          setSettings({ latitude: data.geofence_latitude ?? '', longitude: data.geofence_longitude ?? '', radius: data.geofence_radius_meters || 150, enabled: Boolean(data.geofence_enabled) })
+        }
       })
   }, [])
 
@@ -5714,13 +5773,17 @@ function LocationSettings() {
       setMessage('Capture the store location before enabling the geofence.')
       return
     }
+    if (!merchantId) {
+      setMessage('Your store profile could not be loaded. Refresh the page and try again.')
+      return
+    }
     setBusy(true)
     const { error } = await supabase.from('merchant_profile').update({
       geofence_latitude: Number.isFinite(latitude) ? latitude : null,
       geofence_longitude: Number.isFinite(longitude) ? longitude : null,
       geofence_radius_meters: Math.min(5000, Math.max(25, Number(settings.radius) || 150)),
       geofence_enabled: settings.enabled,
-    }).select('id').single()
+    }).eq('id', merchantId).select('id').single()
     setBusy(false)
     setMessage(error ? error.message : settings.enabled ? 'Geofence enabled. Shoppers must be inside this area.' : 'Geofence settings saved but enforcement is off.')
   }
@@ -6398,12 +6461,16 @@ function Payments() {
 
 function VerificationSettings() {
   const [settings, setSettings] = useState({ verification_mode: 'all', verification_threshold: 0, random_audit_percent: 10, mismatch_tolerance: 0, vat_percent: 0, receipt_footer: '', operating_hours: '' })
+  const [merchantId, setMerchantId] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(true)
 
   useEffect(() => {
-    supabase.from('merchant_profile').select('verification_mode,verification_threshold,random_audit_percent,mismatch_tolerance,vat_percent,receipt_footer,operating_hours').maybeSingle().then(({ data, error }) => {
-      if (data) setSettings((current) => ({ ...current, ...data, operating_hours: typeof data.operating_hours === 'string' ? data.operating_hours : data.operating_hours?.note || '' }))
+    supabase.from('merchant_profile').select('id,verification_mode,verification_threshold,random_audit_percent,mismatch_tolerance,vat_percent,receipt_footer,operating_hours').maybeSingle().then(({ data, error }) => {
+      if (data) {
+        setMerchantId(data.id)
+        setSettings((current) => ({ ...current, verification_mode: data.verification_mode, verification_threshold: data.verification_threshold, random_audit_percent: data.random_audit_percent, mismatch_tolerance: data.mismatch_tolerance, vat_percent: data.vat_percent, receipt_footer: data.receipt_footer, operating_hours: typeof data.operating_hours === 'string' ? data.operating_hours : data.operating_hours?.note || '' }))
+      }
       if (error) setMessage(error.message)
       setBusy(false)
     })
@@ -6411,6 +6478,10 @@ function VerificationSettings() {
 
   async function save(event) {
     event.preventDefault()
+    if (!merchantId) {
+      setMessage('Your store profile could not be loaded. Refresh the page and try again.')
+      return
+    }
     setBusy(true)
     setMessage('')
     const values = {
@@ -6421,7 +6492,7 @@ function VerificationSettings() {
       vat_percent: Math.min(100, Math.max(0, Number(settings.vat_percent) || 0)),
       operating_hours: settings.operating_hours ? { note: settings.operating_hours } : {},
     }
-    const { error } = await supabase.from('merchant_profile').update(values).select('id').single()
+    const { error } = await supabase.from('merchant_profile').update(values).eq('id', merchantId).select('id').single()
     setMessage(error ? error.message : 'Verification and receipt policy saved.')
     setBusy(false)
   }

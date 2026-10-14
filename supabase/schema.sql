@@ -305,7 +305,7 @@ using (user_id = auth.uid());
 drop policy if exists "public reads store display profile" on public.merchant_profile;
 create policy "public reads store display profile"
 on public.merchant_profile for select
-to anon
+to anon, authenticated
 using (
   exists (
     select 1 from public.qr_codes
@@ -356,7 +356,7 @@ using (public.is_active_staff(merchant_id));
 drop policy if exists "public reads checkout products" on public.products;
 create policy "public reads checkout products"
 on public.products for select
-to anon
+to anon, authenticated
 using (
   is_available
   and exists (
@@ -376,7 +376,7 @@ with check (public.owns_merchant(merchant_id));
 drop policy if exists "public reads qr codes" on public.qr_codes;
 create policy "public reads qr codes"
 on public.qr_codes for select
-to anon
+to anon, authenticated
 using (true);
 
 drop policy if exists "merchant reads own orders" on public.orders;
@@ -395,7 +395,7 @@ with check (public.owns_merchant(merchant_id));
 drop policy if exists "public reads paid receipts" on public.orders;
 create policy "public reads paid receipts"
 on public.orders for select
-to anon
+to anon, authenticated
 using (receipt_token is not null and status in ('paid', 'exited'));
 
 drop policy if exists "merchant reads own order items" on public.order_items;
@@ -413,7 +413,7 @@ using (
 drop policy if exists "public reads paid receipt items" on public.order_items;
 create policy "public reads paid receipt items"
 on public.order_items for select
-to anon
+to anon, authenticated
 using (
   exists (
     select 1 from public.orders

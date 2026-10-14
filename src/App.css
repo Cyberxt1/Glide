@@ -6342,3 +6342,27 @@ tbody tr:hover {
 @media (max-width: 640px) {
   .reason-grid, .decision-toggle { grid-template-columns: 1fr; }
 }
+.shopper-location-card {
+  align-items: center;
+  background: #fffaf0;
+  border: 1px solid #ead7ab;
+  border-radius: 18px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  margin: 14px 0;
+  padding: 16px;
+}
+
+.shopper-location-card.inside { background: #eef9f3; border-color: #addbc5; }
+.shopper-location-card.outside, .shopper-location-card.blocked { background: #fff4f1; border-color: #edc2b9; }
+.shopper-location-icon { align-items: center; background: #173f2d; border-radius: 50%; color: white; display: flex; font-size: 22px; height: 44px; justify-content: center; width: 44px; }
+.shopper-location-card > div:nth-child(2) { display: grid; gap: 3px; }
+.shopper-location-card span { color: #69756f; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.shopper-location-card strong { color: #17271f; }
+.shopper-location-card small { color: #56635c; line-height: 1.45; }
+
+@media (max-width: 640px) {
+  .shopper-location-card { grid-template-columns: auto minmax(0, 1fr); }
+  .shopper-location-card > button { grid-column: 1 / -1; width: 100%; }
+}
