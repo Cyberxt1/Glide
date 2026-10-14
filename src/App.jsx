@@ -4573,6 +4573,8 @@ function CustomerCheckout({ qrCode }) {
   const [spendLimit, setSpendLimit] = useState(() => Number(localStorage.getItem(`glide:spend-limit:${qrCode}`)) || 0)
   const [budgetDraft, setBudgetDraft] = useState('')
   const [showBudgetPrompt, setShowBudgetPrompt] = useState(false)
+  const [editingBudget, setEditingBudget] = useState(false)
+  const [showChallengeModal, setShowChallengeModal] = useState(false)
   const [nepoToast, setNepoToast] = useState('')
   const [limitIgnored, setLimitIgnored] = useState(false)
   const [limitExceededPrompt, setLimitExceededPrompt] = useState(false)
@@ -4607,6 +4609,12 @@ function CustomerCheckout({ qrCode }) {
     if (spendLimit > 0) localStorage.setItem(spendLimitKey, String(spendLimit))
     else localStorage.removeItem(spendLimitKey)
   }, [spendLimit, spendLimitKey])
+
+  useEffect(() => {
+    if (!message || pendingPayment || busy) return undefined
+    const timer = window.setTimeout(() => setMessage(''), 3500)
+    return () => window.clearTimeout(timer)
+  }, [busy, message, pendingPayment])
 
   useEffect(() => {
     let nextSessionId = sessionStorage.getItem(sessionStorageKey)
@@ -5095,6 +5103,7 @@ function CustomerCheckout({ qrCode }) {
 
   function finishShopperIntro() {
     setShowIntro(false)
+    setEditingBudget(false)
     setShowBudgetPrompt(true)
   }
 
@@ -5108,12 +5117,14 @@ function CustomerCheckout({ qrCode }) {
     setLimitIgnored(false)
     limitAlertedRef.current = false
     setShowBudgetPrompt(false)
+    setEditingBudget(false)
     setNepoToast(`Budget locked at ${formatMoney(amount)}. Your account officer can breathe now 😌`)
   }
 
   function skipBudget() {
     setSpendLimit(0)
     setShowBudgetPrompt(false)
+    setEditingBudget(false)
     setNepoToast('Nepo mode verified 😂 No budget, just vibes — but the ₦15k gift challenge is still on!')
   }
 
@@ -5545,7 +5556,9 @@ function CustomerCheckout({ qrCode }) {
         </div>
       ) : null}
 
-      {showBudgetPrompt ? <div className="guide-backdrop" role="dialog" aria-modal="true"><section className="guide-modal budget-prompt-card"><p className="eyebrow">Before temptation starts</p><h1>How much are we spending today?</h1><p className="lead">Set a personal limit and Glide will warn you when the basket crosses it. Or cancel and activate full “Nepo mode” 😂</p><label>Shopping limit<div className="budget-input"><span>₦</span><input autoFocus inputMode="decimal" min="100" placeholder="e.g. 20,000" type="number" value={budgetDraft} onChange={(event) => setBudgetDraft(event.target.value)} /></div></label><div className="app-dialog-actions"><button type="button" onClick={skipBudget}>Cancel — no limit</button><button type="button" onClick={activateBudget}>Enter limit</button></div></section></div> : null}
+      {showBudgetPrompt ? <div className="guide-backdrop" role="dialog" aria-modal="true"><section className="guide-modal budget-prompt-card"><p className="eyebrow">{editingBudget ? 'Budget control' : 'Before temptation starts'}</p><h1>How much are we spending today?</h1><p className="lead">Set a personal limit and Glide will warn you when the basket crosses it. Or cancel and activate full “Nepo mode” 😂</p><label>Shopping limit<div className="budget-input"><span>₦</span><input autoFocus inputMode="decimal" min="100" placeholder="e.g. 20,000" type="number" value={budgetDraft} onChange={(event) => setBudgetDraft(event.target.value)} /></div></label><div className="app-dialog-actions"><button type="button" onClick={() => editingBudget ? setShowBudgetPrompt(false) : skipBudget()}>{editingBudget ? 'Keep current' : 'Cancel — no limit'}</button><button type="button" onClick={activateBudget}>Enter limit</button></div></section></div> : null}
+
+      {showChallengeModal ? <div className="guide-backdrop" role="dialog" aria-modal="true" onClick={() => setShowChallengeModal(false)}><section className={`guide-modal challenge-modal ${challengeQualified ? 'complete' : ''}`} onClick={(event) => event.stopPropagation()}><div className="challenge-modal-ring" style={{ '--challenge-progress': `${Math.min(100, (total / challengeTarget) * 100) * 3.6}deg` }}><strong>{Math.min(100, Math.round((total / challengeTarget) * 100))}%</strong></div><p className="eyebrow">Today’s basket challenge</p><h1>{challengeQualified ? 'You did it! Gift unlocked 🎁' : `${formatMoney(Math.max(0, challengeTarget - total))} to go`}</h1><p className="lead">{challengeQualified ? 'Complete payment, verify your receipt, then redeem your participating-store gift at the checkpoint.' : limitIgnored ? 'This challenge is paused because the spend-limit warning was ignored.' : `Build your basket to ${formatMoney(challengeTarget)} to unlock a counter gift. No shortcuts, abeg 😄`}</p><button type="button" onClick={() => setShowChallengeModal(false)}>Back to shopping</button></section></div> : null}
 
       {limitExceededPrompt ? <div className="guide-backdrop" role="alertdialog" aria-modal="true"><section className="guide-modal limit-alert-card"><p className="eyebrow">Budget don red 🚨</p><h1>You’ve crossed your limit.</h1><p className="lead">Your basket is {formatMoney(total - spendLimit)} above the {formatMoney(spendLimit)} limit. Remove something to stay disciplined, or continue and leave the gift challenge.</p><div className="app-dialog-actions"><button type="button" onClick={() => { setLimitExceededPrompt(false); setActiveTab('cart') }}>Review my cart</button><button className="danger" type="button" onClick={ignoreSpendLimit}>Ignore limit</button></div></section></div> : null}
 
@@ -5576,12 +5589,14 @@ function CustomerCheckout({ qrCode }) {
       ) : null}
 
       <header className="shop-header">
-        <div>
+        <div className="shop-header-main">
           <span>Welcome to</span>
           <strong>{store?.merchant_profile?.store_name || 'Store'}</strong>
           <small>{cartCount ? `${cartCount} item${cartCount === 1 ? '' : 's'} in cart` : 'Scan products as you shop'}</small>
         </div>
         <div className="shop-options">
+          <button className="header-budget-button" type="button" onClick={() => { setBudgetDraft(spendLimit || ''); setEditingBudget(true); setShowBudgetPrompt(true) }}><span>Budget</span><strong>{spendLimit ? formatMoney(spendLimit) : 'Set'}</strong></button>
+          <button className={`header-challenge-button ${challengeQualified ? 'complete' : ''}`} aria-label="Open basket challenge" style={{ '--challenge-progress': `${Math.min(100, (total / challengeTarget) * 100) * 3.6}deg` }} type="button" onClick={() => setShowChallengeModal(true)}><i>{challengeQualified ? '🎁' : `${Math.min(100, Math.round((total / challengeTarget) * 100))}%`}</i></button>
           <button
             className="end-session-button"
             type="button"
@@ -5625,32 +5640,6 @@ function CustomerCheckout({ qrCode }) {
         </button>
       </nav>
 
-      <section className={`spend-limit-card ${spendLimit > 0 && total > spendLimit ? 'over' : ''}`}>
-        <div>
-          <span>Spend limit</span>
-          <strong>{spendLimit > 0 ? formatMoney(spendLimit) : 'Not set'}</strong>
-          {spendLimit > 0 ? <small>{total > spendLimit ? `${formatMoney(total - spendLimit)} over limit` : `${formatMoney(spendLimit - total)} remaining`}</small> : <small>Set a budget for this shopping trip</small>}
-        </div>
-        <label>
-          <span>₦</span>
-          <input
-            aria-label="Shopping spend limit"
-            inputMode="decimal"
-            min="0"
-            placeholder="Set limit"
-            type="number"
-            value={spendLimit || ''}
-            onChange={(event) => { setSpendLimit(Math.max(0, Number(event.target.value) || 0)); setLimitIgnored(false); limitAlertedRef.current = false }}
-          />
-        </label>
-        {spendLimit > 0 ? <div className="spend-progress"><span style={{ width: `${Math.min(100, (total / spendLimit) * 100)}%` }} /></div> : null}
-      </section>
-
-      <section className={`shopping-challenge-card ${challengeQualified ? 'complete' : ''} ${limitIgnored ? 'disabled' : ''}`}>
-        <div><span>{challengeQualified ? 'Challenge complete 🎉' : limitIgnored ? 'Challenge paused' : 'Today’s basket challenge'}</span><strong>{challengeQualified ? 'Free-gift claim unlocked!' : `Reach ${formatMoney(challengeTarget)}`}</strong><small>{challengeQualified ? 'Complete payment and show your verified receipt at the counter to claim the participating-store gift.' : limitIgnored ? 'Ignoring your spend warning ended eligibility for this trip.' : `${formatMoney(Math.max(0, challengeTarget - total))} to go. No shortcuts, abeg 😄`}</small></div>
-        <div className="challenge-progress"><span style={{ width: `${Math.min(100, (total / challengeTarget) * 100)}%` }} /></div>
-      </section>
-
       {networkWarning ? <Notice tone="warning">{networkWarning}</Notice> : null}
       {store?.merchant_profile?.geofence_enabled && geofenceState !== 'inside' ? (
         <section className={`shopper-location-card ${geofenceState}`} role="status">
@@ -5659,7 +5648,7 @@ function CustomerCheckout({ qrCode }) {
           {geofenceState !== 'inside' ? <button disabled={locationBusy || geofenceState === 'unsupported'} type="button" onClick={() => requestShopperLocation(false)}>{locationBusy ? 'Checking…' : geofenceState === 'blocked' ? 'Try location again' : 'Use my location'}</button> : <button className="secondary-action" disabled={locationBusy} type="button" onClick={() => requestShopperLocation(false)}>Refresh</button>}
         </section>
       ) : null}
-      {message ? <Notice tone="warning">{message}</Notice> : null}
+      {message ? <div className="shopper-flash" role="status"><strong>{message}</strong><button type="button" aria-label="Dismiss notification" onClick={() => setMessage('')}>×</button></div> : null}
 
       {pendingPayment ? (
         <section className="payment-recovery-card" role="status">
