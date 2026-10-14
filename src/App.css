@@ -5994,3 +5994,89 @@ tbody tr:hover {
     grid-template-columns: minmax(0, 1fr) 126px;
   }
 }
+
+/* Dedicated one-time shopper payment terminal. */
+.shopper-terminal-page {
+  min-height: 100vh;
+  padding: 22px clamp(18px, 4vw, 48px) 48px;
+  color: #171b18;
+  background: #f5f7f5;
+}
+
+.shopper-terminal-page .cashier-header {
+  width: min(1120px, 100%);
+  margin: 0 auto 22px;
+  border: 1px solid #e1e6e2;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.shopper-terminal-page .payment-verifier {
+  width: min(920px, 100%);
+  margin-inline: auto;
+}
+
+.verification-guide {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.verification-guide > div {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 3px 10px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid #e1e6e2;
+  border-radius: 13px;
+  background: #fff;
+}
+
+.verification-guide span {
+  grid-row: 1 / span 2;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: #185f47;
+  background: #e7f3ed;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.verification-guide strong {
+  font-size: 13px;
+}
+
+.verification-guide small {
+  color: #7b847e;
+  font-size: 10px;
+}
+
+.payment-verifier .security-scanner {
+  padding: 16px;
+  border: 1px solid #dfe5e0;
+  border-radius: 15px;
+  background: #fff;
+}
+
+.payment-verifier .security-manifest {
+  border-color: #dfe5e0;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.payment-verifier .security-manifest.used {
+  border-color: #e4b3aa;
+  background: #fff8f7;
+}
+
+@media (max-width: 700px) {
+  .verification-guide {
+    grid-template-columns: 1fr;
+  }
+}

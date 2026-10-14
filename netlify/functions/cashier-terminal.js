@@ -115,7 +115,7 @@ export async function handler(event) {
 
       if (order.error) return bad(order.error.message)
       if (!order.data) return bad('Receipt not found.', 404)
-      if (order.data.status === 'exited') return bad('Security Warning: Receipt Already Used.', 409)
+      if (order.data.status === 'exited') return bad('This receipt has already been verified and cannot be reused.', 409)
       if (order.data.payment_status !== 'paid') return bad('Receipt is not paid.', 409)
 
       const updated = await supabase
@@ -126,7 +126,7 @@ export async function handler(event) {
         .select('*,order_items(*)')
         .single()
 
-      if (updated.error) return bad('Security Warning: Receipt Already Used.', 409)
+      if (updated.error) return bad('This receipt has already been verified and cannot be reused.', 409)
 
       return json(200, { order: updated.data })
     }

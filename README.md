@@ -13,7 +13,7 @@ Included:
 - Customer checkout at `/s/[qrCode]`
 - Paystack server-side payment initialization and verification
 - Receipt page at `/receipt/[token]`
-- Receipt verification at `/dash/verify`
+- One-time payment verification at `/shopper-terminal`
 - Orders at `/dash/orders`
 - Supabase schema with RLS
 - Netlify functions for trusted order/payment work
@@ -86,7 +86,7 @@ Rows are validated before import. Broken rows are not silently imported.
 5. Paystack returns to `/pay/[receiptToken]`.
 6. `verify-payment` verifies Paystack server-side, marks the order `paid`, records payment and reduces tracked stock.
 7. Receipt is available at `/receipt/[token]`.
-8. Merchant/security verifies the token at `/dash/verify` and marks the order `exited`.
+8. A shopper verifier confirms the payment at `/shopper-terminal`; the receipt is then closed and cannot be reused.
 
 ## Netlify
 

@@ -163,10 +163,10 @@ function App() {
     return <CashierPage session={session} />
   }
 
-  if (path === '/security') {
+  if (path === '/shopper-terminal' || path === '/security') {
     if (!sessionLoaded) return <main className="auth-page"><LoadingRows /></main>
     if (!session) return <Login />
-    return <SecurityPage session={session} />
+    return <ShopperTerminal session={session} />
   }
 
   const smartAddMatch = path.match(/^\/smart-add\/([^/]+)$/)
@@ -385,7 +385,7 @@ async function getUserHomePath() {
     .eq('is_active', true)
     .maybeSingle()
 
-  if (staff.data?.role === 'security') return '/security'
+  if (staff.data?.role === 'security') return '/shopper-terminal'
   if (staff.data?.role === 'cashier') return '/cashier'
 
   return '/setup-store'
@@ -1294,7 +1294,6 @@ function MerchantDashboardRoute({ path, session }) {
   if (path === '/dash/smart-add') return shell(<SmartAddDashboard />)
   if (path === '/dash/import') return shell(<CsvImport />)
   if (path === '/dash/qr') return shell(<QrPage />)
-  if (path === '/dash/verify') return shell(<VerifyReceipt />)
   if (path === '/dash/orders') return shell(<Orders />)
   if (path === '/dash/payments') return shell(<Payments />)
   if (path === '/dash/staff') return shell(<StaffManagement />)
@@ -1637,7 +1636,6 @@ function AppShell({ session, profile, main }) {
     { href: '/dash/qr', label: 'Store QR', icon: 'qr' },
     { href: '/dash/staff', label: 'Team', icon: 'team' },
     { href: '/cashier', label: 'Cashier', icon: 'terminal' },
-    { href: '/dash/verify', label: 'Security gate', icon: 'shield' },
   ]
 
   async function logout() {
@@ -1801,7 +1799,7 @@ function Dashboard() {
             <Link href="/dash/orders"><span>01</span><div><small>In-store shopping</small><strong>View all orders</strong></div><b>→</b></Link>
             <Link href="/dash/payments"><span>02</span><div><small>Money movement</small><strong>Track payments</strong></div><b>→</b></Link>
             <Link href="/dash/stock"><span>03</span><div><small>Inventory</small><strong>Update stock</strong></div><b>→</b></Link>
-            <Link href="/dash/verify"><span>04</span><div><small>Store exit</small><strong>Verify receipts</strong></div><b>→</b></Link>
+            <Link href="/dash/qr"><span>04</span><div><small>Shopper access</small><strong>Manage store QR</strong></div><b>→</b></Link>
           </div>
           <div className="dashboard-insight-grid">
             <section className="dashboard-insight-card payment-health-card">
@@ -3218,7 +3216,7 @@ function StaffManagement() {
             Role
             <select value={form.role} onChange={(event) => update('role', event.target.value)}>
               <option value="cashier">Cashier</option>
-              <option value="security">Security</option>
+              <option value="security">Shopper verifier</option>
             </select>
           </label>
           <label>
@@ -3844,23 +3842,12 @@ function CashierPage({ session }) {
   const [payment, setPayment] = useState({ type: 'Cash', reference: '' })
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [receiptToken, setReceiptToken] = useState('')
-  const [auditOrder, setAuditOrder] = useState(null)
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [online, setOnline] = useState(() => navigator.onLine)
 
   const cartCount = cart.reduce((sum, item) => sum + item.cartQuantity, 0)
   const total = cart.reduce((sum, item) => sum + Number(item.price) * item.cartQuantity, 0)
-
-  const groupedAuditItems = useMemo(() => {
-    const rows = auditOrder?.order_items || []
-    return [...rows].sort((left, right) => {
-      const leftValue = Number(left.line_total || 0)
-      const rightValue = Number(right.line_total || 0)
-      return rightValue - leftValue
-    })
-  }, [auditOrder])
 
   const searchResults = useMemo(() => {
     const term = searchQuery.trim().toLowerCase()
@@ -3921,23 +3908,6 @@ function CashierPage({ session }) {
     const timer = window.setInterval(ping, 60 * 1000)
     return () => window.clearInterval(timer)
   }, [gateway.authCode, terminal])
-
-  useEffect(() => {
-    let channel
-    try {
-      channel = new BroadcastChannel('glide-cashier-terminal')
-      channel.onmessage = (event) => {
-        if (event.data?.type === 'receipt-burned' && event.data.receiptToken === auditOrder?.receipt_token) {
-          setAuditOrder((current) => current ? { ...current, status: 'exited' } : current)
-          setMessage('Security Warning: Receipt Already Used.')
-        }
-      }
-    } catch {
-      return undefined
-    }
-
-    return () => channel?.close()
-  }, [auditOrder?.receipt_token])
 
   async function logout() {
     localStorage.removeItem(cashierTerminalKey)
@@ -4125,46 +4095,6 @@ function CashierPage({ session }) {
     }
   }
 
-  async function verifyReceipt(event) {
-    event.preventDefault()
-    const token = receiptToken.trim()
-    if (!token) return
-
-    setBusy(true)
-    setMessage('')
-    setAuditOrder(null)
-
-    try {
-      const result = await callFunction('cashier-terminal', {
-        action: 'verify-receipt',
-        receiptToken: token,
-        station: 'cashier',
-      })
-      setAuditOrder(result.order)
-      if (result.order.status === 'exited') {
-        setMessage('Security Warning: Receipt Already Used.')
-      }
-    } catch (error) {
-      setMessage(error.message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function burnReceipt() {
-    if (!auditOrder?.receipt_token) return
-    setBusy(true)
-    setMessage('')
-
-    try {
-      setMessage('Paid items checked and packed. Send customer to security for exit scan.')
-    } catch (error) {
-      setMessage(error.message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
   if (!terminal) {
     return (
       <main className="cashier-page cashier-lock-page">
@@ -4210,7 +4140,7 @@ function CashierPage({ session }) {
       <header className="cashier-header">
         <div>
           <span>{terminal.storeName}</span>
-          <strong>{mode === 'home' ? 'Cashier dashboard' : mode === 'manual' ? 'Manual Checkout' : 'Paid Order Packing'}</strong>
+          <strong>{mode === 'home' ? 'Cashier dashboard' : 'Manual checkout'}</strong>
           <small>{terminal.branchName || 'Main branch'} - {session.user.email}</small>
         </div>
         <div className="cashier-header-actions">
@@ -4232,10 +4162,6 @@ function CashierPage({ session }) {
           <button className="cashier-mode-button manual" type="button" onClick={() => setMode('manual')}>
             <span>Manual Checkout</span>
             <small>Walk-in shoppers, scanner cart and counter payment</small>
-          </button>
-          <button className="cashier-mode-button verify" type="button" onClick={() => setMode('verify')}>
-            <span>Paid Order Packing</span>
-            <small>Scan paid receipt, verify items and pack before security</small>
           </button>
         </section>
       ) : null}
@@ -4356,52 +4282,6 @@ function CashierPage({ session }) {
             )}
           </section>
         </>
-      ) : null}
-
-      {mode === 'verify' ? (
-        <section className="cashier-verify-panel">
-          <form className="cashier-scan-bar" onSubmit={verifyReceipt}>
-            <label>
-              Receipt barcode
-              <input
-                autoFocus
-                placeholder="Scan customer receipt barcode"
-                value={receiptToken}
-                onChange={(event) => setReceiptToken(event.target.value)}
-              />
-            </label>
-            <button disabled={busy} type="submit">
-              {busy ? 'Checking...' : 'Scan Receipt'}
-            </button>
-          </form>
-
-          {auditOrder ? (
-            <section className={`audit-card ${auditOrder.status === 'exited' ? 'used' : ''}`}>
-              <div className="audit-summary">
-                <span>{auditOrder.status === 'exited' ? 'Already exited at security' : `${groupedAuditItems.reduce((sum, item) => sum + item.quantity, 0)} Items Total - Paid`}</span>
-                <strong>{formatMoney(auditOrder.total_amount)}</strong>
-              </div>
-              <div className="audit-list">
-                {groupedAuditItems.map((item) => (
-                  <div className={Number(item.line_total) >= 10000 ? 'high-value' : ''} key={item.id}>
-                    <span>{item.product_name}</span>
-                    <strong>{item.quantity} x {formatMoney(item.unit_price)}</strong>
-                  </div>
-                ))}
-              </div>
-              <button
-                className="confirm-exit-button"
-                disabled={busy || auditOrder.status === 'exited'}
-                type="button"
-                onClick={burnReceipt}
-              >
-                Mark packed for security
-              </button>
-            </section>
-          ) : (
-            <EmptyState>Scan the paid receipt barcode to load the purchase manifest.</EmptyState>
-          )}
-        </section>
       ) : null}
 
       {searchOpen ? (
@@ -5674,7 +5554,7 @@ function ReceiptPage({ token }) {
   )
 }
 
-function VerifyReceipt() {
+function PaymentVerifier() {
   const [code, setCode] = useState('')
   const [order, setOrder] = useState(null)
   const [message, setMessage] = useState('')
@@ -5715,7 +5595,7 @@ function VerifyReceipt() {
         station: 'security',
       })
       setOrder(result.order)
-      setMessage('Customer exit completed.')
+      setMessage('Payment verified. This receipt is now closed and cannot be used again.')
     } catch (error) {
       setMessage(error.message || 'This receipt cannot be exited again.')
     }
@@ -5725,11 +5605,16 @@ function VerifyReceipt() {
   const itemCount = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
 
   return (
-    <section className="dash-section">
-      <PageTitle title="Security scanner" subtitle="Scan a paid customer receipt, review all items and complete exit." />
+    <section className="dash-section payment-verifier">
+      <PageTitle title="Verify payment" subtitle="Scan the shopper's receipt, confirm the purchase, then close it permanently." />
+      <div className="verification-guide">
+        <div><span>1</span><strong>Scan receipt</strong><small>Use the barcode or 7-character code.</small></div>
+        <div><span>2</span><strong>Confirm payment</strong><small>Review the amount and purchased items.</small></div>
+        <div><span>3</span><strong>Close once</strong><small>The receipt cannot be verified again.</small></div>
+      </div>
       <form className="security-scanner" onSubmit={verify}>
         <label>
-          Receipt authentication code
+          Receipt code
           <input
             autoFocus
             placeholder="Scan or enter the 7-character code"
@@ -5737,14 +5622,14 @@ function VerifyReceipt() {
             onChange={(event) => setCode(event.target.value)}
           />
         </label>
-        <button type="submit">Scan</button>
+        <button type="submit">Check payment</button>
       </form>
       {message ? <Notice tone="warning">{message}</Notice> : null}
       {order ? (
         <section className={`security-manifest ${order.status === 'exited' ? 'used' : ''}`}>
           <header>
             <div>
-              <span>{order.status === 'exited' ? 'Already exited' : 'Paid receipt'}</span>
+              <span>{order.status === 'exited' ? 'Already verified · Cannot be reused' : 'Payment confirmed'}</span>
               <h2>{order.order_number}</h2>
             </div>
             <strong>{itemCount} items</strong>
@@ -5752,7 +5637,7 @@ function VerifyReceipt() {
           <SimpleList
             rows={[
               { label: 'Payment', value: order.payment_status },
-              { label: 'Exit status', value: order.status },
+              { label: 'Verification status', value: order.status === 'exited' ? 'closed' : 'ready' },
               { label: 'Total', value: formatMoney(order.total_amount) },
             ]}
           />
@@ -5766,7 +5651,7 @@ function VerifyReceipt() {
           </div>
           {order.status === 'paid' ? (
             <button type="button" onClick={markExited}>
-              Complete customer exit
+              Verify and close receipt
             </button>
           ) : null}
         </section>
@@ -5775,18 +5660,18 @@ function VerifyReceipt() {
   )
 }
 
-function SecurityPage({ session }) {
-  const [terminal, setTerminal] = useState(() => readJsonStorage('glide:security:terminal', null))
+function ShopperTerminal({ session }) {
+  const [terminal, setTerminal] = useState(() => readJsonStorage('glide:shopper-terminal', null))
   const [gateway, setGateway] = useState({ storeName: '', authCode: '' })
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    if (terminal) writeJsonStorage('glide:security:terminal', terminal)
+    if (terminal) writeJsonStorage('glide:shopper-terminal', terminal)
   }, [terminal])
 
   async function logout() {
-    localStorage.removeItem('glide:security:terminal')
+    localStorage.removeItem('glide:shopper-terminal')
     setTerminal(null)
     await supabase.auth.signOut()
     navigate('/login')
@@ -5806,7 +5691,7 @@ function SecurityPage({ session }) {
       })
       setTerminal({ ...result.terminal, authCode: gateway.authCode })
       setGateway((current) => ({ ...current, authCode: '' }))
-      setMessage('Security scanner online.')
+      setMessage('Shopper payment terminal online.')
     } catch (error) {
       setMessage(error.message)
     } finally {
@@ -5819,10 +5704,10 @@ function SecurityPage({ session }) {
       <main className="cashier-page cashier-lock-page">
         <form className="cashier-lock-panel" onSubmit={validateGateway}>
           <Link className="brand" href="/">
-            Glide Security
+            Glide
           </Link>
-          <p className="eyebrow">Exit scanner</p>
-          <h1>Unlock security station</h1>
+          <p className="eyebrow">Shopper terminal</p>
+          <h1>Open payment verification</h1>
           {message ? <Notice tone="warning">{message}</Notice> : null}
           <label>
             Store Name
@@ -5833,7 +5718,7 @@ function SecurityPage({ session }) {
             <input required autoCapitalize="characters" value={gateway.authCode} onChange={(event) => setGateway((current) => ({ ...current, authCode: event.target.value.toUpperCase() }))} />
           </label>
           <button disabled={busy} type="submit">
-            {busy ? 'Checking scanner...' : 'Unlock scanner'}
+            {busy ? 'Checking terminal...' : 'Open terminal'}
           </button>
           <button type="button" onClick={logout}>
             Sign out
@@ -5844,11 +5729,11 @@ function SecurityPage({ session }) {
   }
 
   return (
-    <main className="cashier-page security-page">
+    <main className="cashier-page shopper-terminal-page">
       <header className="cashier-header">
         <div>
           <span>{terminal.storeName}</span>
-          <strong>Security scanner</strong>
+          <strong>Shopper payment verification</strong>
           <small>{terminal.branchName || 'Main branch'} - {session.user.email}</small>
         </div>
         <div className="cashier-header-actions">
@@ -5858,7 +5743,7 @@ function SecurityPage({ session }) {
         </div>
       </header>
       {message ? <Notice tone="success">{message}</Notice> : null}
-      <VerifyReceipt />
+      <PaymentVerifier />
     </main>
   )
 }
