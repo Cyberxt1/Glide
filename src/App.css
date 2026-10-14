@@ -4423,6 +4423,428 @@ tbody tr:hover {
   font-weight: 800;
 }
 
+.nav-glyph.payment::before {
+  content: '₦';
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.dashboard-insight-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, .7fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.dashboard-insight-card {
+  padding: 22px;
+  border: 1px solid #e0e7e3;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 10px 35px rgb(26 67 52 / 6%);
+}
+
+.dashboard-insight-card header,
+.payments-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.dashboard-insight-card header span {
+  color: #748079;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.dashboard-insight-card h2 {
+  margin: 4px 0 0;
+}
+
+.payment-health-meter {
+  height: 9px;
+  margin: 24px 0 18px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf1ef;
+}
+
+.payment-health-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #18a66f, #79d6a8);
+}
+
+.payment-health-numbers {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.payment-health-numbers div,
+.customer-pulse-meta {
+  display: grid;
+  gap: 3px;
+}
+
+.payment-health-numbers strong {
+  color: #173d31;
+  font-size: 22px;
+}
+
+.payment-health-numbers span,
+.customer-pulse-meta span {
+  color: #748079;
+  font-size: 12px;
+}
+
+.customer-pulse-card {
+  color: #f8fff9;
+  border-color: #173d31;
+  background: #173d31;
+}
+
+.customer-pulse-card header span,
+.customer-pulse-card .customer-pulse-meta span {
+  color: #b9d1c6;
+}
+
+.customer-pulse-score {
+  display: grid;
+  margin: 24px 0 18px;
+}
+
+.customer-pulse-score strong {
+  color: #dfff72;
+  font-size: 54px;
+  line-height: 1;
+}
+
+.payments-page {
+  display: grid;
+  gap: 20px;
+}
+
+.payment-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.payment-kpi-grid > div {
+  display: grid;
+  gap: 6px;
+  padding: 20px;
+  border: 1px solid #e0e7e3;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.payment-kpi-grid span,
+.payment-kpi-grid small {
+  color: #748079;
+}
+
+.payment-kpi-grid strong {
+  color: #163d31;
+  font-size: 28px;
+}
+
+.payments-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.payments-toolbar > input {
+  width: min(440px, 100%);
+}
+
+.payments-toolbar > div {
+  display: flex;
+  gap: 6px;
+}
+
+.payments-toolbar button {
+  text-transform: capitalize;
+}
+
+.payments-toolbar button.active {
+  color: #fff;
+  border-color: #173d31;
+  background: #173d31;
+}
+
+.payments-table td:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.payments-table td small {
+  color: #7a8680;
+}
+
+.payment-reference {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shopper-home {
+  min-height: 100vh;
+  color: #17352c;
+  background: #f4f8f5;
+}
+
+.shopper-home > nav,
+.shopper-welcome,
+.shopper-after-grid,
+.shopper-home > .notice,
+.shopper-footer {
+  width: min(1080px, calc(100% - 32px));
+  margin-inline: auto;
+}
+
+.shopper-home > nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 72px;
+}
+
+.shopper-home > nav > span {
+  color: #687871;
+  font-size: 13px;
+}
+
+.shopper-welcome {
+  position: relative;
+  padding: 54px clamp(24px, 7vw, 76px);
+  overflow: hidden;
+  border-radius: 28px;
+  color: #fafffb;
+  background: linear-gradient(130deg, #123f32 0%, #176a50 100%);
+}
+
+.shopper-welcome::after {
+  content: '';
+  position: absolute;
+  width: 320px;
+  aspect-ratio: 1;
+  right: -80px;
+  bottom: -150px;
+  border: 55px solid rgb(222 255 112 / 12%);
+  border-radius: 50%;
+}
+
+.shopper-success-mark {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 24px;
+  border-radius: 50%;
+  color: #123f32;
+  background: #dfff72;
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.shopper-welcome h1 {
+  max-width: 720px;
+  margin: 8px 0 14px;
+  font-size: clamp(34px, 5vw, 58px);
+  line-height: 1.03;
+}
+
+.shopper-welcome > p:not(.eyebrow) {
+  max-width: 620px;
+  color: #cde0d7;
+  font-size: 17px;
+}
+
+.shopper-welcome-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-top: 28px;
+}
+
+.shopper-welcome-actions .primary-action {
+  color: #123f32;
+  background: #dfff72;
+}
+
+.shopper-welcome-actions span {
+  color: #b8cec3;
+  font-size: 13px;
+}
+
+.shopper-after-grid {
+  display: grid;
+  grid-template-columns: 1.05fr .95fr;
+  gap: 18px;
+  padding: 22px 0 40px;
+}
+
+.shopper-feedback-card,
+.shopper-early-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: clamp(22px, 4vw, 36px);
+  border: 1px solid #dfe7e3;
+  border-radius: 22px;
+  background: #fff;
+}
+
+.shopper-feedback-card h2,
+.shopper-early-card h2 {
+  margin: 0;
+  font-size: clamp(26px, 3vw, 36px);
+}
+
+.rating-buttons {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+
+.rating-buttons button {
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  min-height: 70px;
+  padding: 6px;
+  border-color: #e3e9e6;
+  background: #f7f9f8;
+}
+
+.rating-buttons button span {
+  font-size: 25px;
+}
+
+.rating-buttons button.active,
+.feedback-tags button.active {
+  border-color: #1a7658;
+  background: #eaf8f1;
+  box-shadow: inset 0 0 0 1px #1a7658;
+}
+
+.feedback-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.feedback-tags button {
+  min-height: 34px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  color: #52635c;
+  background: #fff;
+  font-size: 12px;
+}
+
+.shopper-feedback-card textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.shopper-early-card {
+  color: #fff;
+  border: 0;
+  background: #17251f;
+}
+
+.shopper-early-card > p {
+  color: #b8c9c0;
+}
+
+.shopper-early-card input {
+  color: #f8fff9;
+  border-color: #405249;
+  background: #22322b;
+}
+
+.shopper-early-card input::placeholder {
+  color: #91a39a;
+}
+
+.shopper-early-card > button {
+  color: #17352c;
+  background: #dfff72;
+}
+
+.early-badge {
+  width: fit-content;
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #dfff72;
+  background: rgb(223 255 114 / 10%);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.shopper-consent {
+  display: flex;
+  align-items: start;
+  gap: 10px;
+  color: #b8c9c0;
+  font-size: 12px;
+}
+
+.shopper-consent input {
+  width: auto;
+  margin-top: 2px;
+}
+
+.shopper-thanks {
+  padding: 18px;
+  border-radius: 14px;
+  color: #196044;
+  background: #eaf8f1;
+}
+
+.shopper-footer {
+  display: flex;
+  justify-content: space-between;
+  padding: 24px 0 34px;
+  color: #75817b;
+}
+
+@media (max-width: 800px) {
+  .dashboard-insight-grid,
+  .shopper-after-grid,
+  .payment-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .payment-health-numbers {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .payments-toolbar,
+  .shopper-welcome-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .payments-toolbar > div {
+    overflow-x: auto;
+  }
+
+  .shopper-welcome {
+    padding: 36px 22px;
+    border-radius: 20px;
+  }
+}
+
 .smart-stock-page {
   display: grid;
   gap: 20px;

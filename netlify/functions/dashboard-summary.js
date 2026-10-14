@@ -17,7 +17,11 @@ export async function handler(event) {
     const { start, end } = startOfToday()
     await supabase.rpc('cancel_expired_pending_orders', { target_merchant_id: merchant.id })
 
-    const [products, todayOrders, pendingPaid, exited, recentOrders, paidItems, activeStaff] =
+    const weekStart = new Date()
+    weekStart.setDate(weekStart.getDate() - 6)
+    weekStart.setHours(0, 0, 0, 0)
+
+    const [products, todayOrders, pendingPaid, exited, recentOrders, paidItems, activeStaff, payments, feedback, signups] =
       await Promise.all([
         supabase
           .from('products')
@@ -58,6 +62,22 @@ export async function handler(event) {
           .select('id,full_name,email,role,last_seen_at,current_station,is_active')
           .eq('merchant_id', merchant.id)
           .eq('is_active', true),
+        supabase
+          .from('payments')
+          .select('id,status,amount,provider,created_at,paid_at,orders(order_number)')
+          .eq('merchant_id', merchant.id)
+          .gte('created_at', weekStart.toISOString())
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('shopper_feedback')
+          .select('rating,tags,created_at')
+          .eq('merchant_id', merchant.id)
+          .gte('created_at', weekStart.toISOString()),
+        supabase
+          .from('shopper_app_signups')
+          .select('id,created_at')
+          .eq('merchant_id', merchant.id)
+          .gte('created_at', weekStart.toISOString()),
       ])
 
     const productRows = products.data || []
@@ -73,6 +93,10 @@ export async function handler(event) {
       .map(([name, quantity_sold]) => ({ name, quantity_sold }))
       .sort((a, b) => b.quantity_sold - a.quantity_sold)
       .slice(0, 5)
+    const paymentRows = payments.data || []
+    const feedbackRows = feedback.data || []
+    const paidPayments = paymentRows.filter((payment) => payment.status === 'paid')
+    const paymentVolume = paidPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
 
     return json(200, {
       storeName: merchant.store_name,
@@ -89,6 +113,21 @@ export async function handler(event) {
       averageOrderValue: orderRows.length ? todayRevenue / orderRows.length : 0,
       recentOrders: recentOrders.data || [],
       topProducts,
+      paymentSummary: {
+        paid: paidPayments.length,
+        pending: paymentRows.filter((payment) => payment.status === 'pending').length,
+        failed: paymentRows.filter((payment) => payment.status === 'failed').length,
+        volume: paymentVolume,
+        successRate: paymentRows.length ? Math.round((paidPayments.length / paymentRows.length) * 100) : 0,
+      },
+      recentPayments: paymentRows.slice(0, 5),
+      customerInsights: {
+        feedbackCount: feedbackRows.length,
+        averageRating: feedbackRows.length
+          ? feedbackRows.reduce((sum, entry) => sum + Number(entry.rating), 0) / feedbackRows.length
+          : 0,
+        earlyAccessSignups: signups.data?.length || 0,
+      },
       activeStaff: (activeStaff.data || []).map((member) => ({
         ...member,
         is_online: member.last_seen_at

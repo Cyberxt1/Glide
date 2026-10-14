@@ -184,6 +184,9 @@ function App() {
   const receiptMatch = path.match(/^\/receipt\/([^/]+)$/)
   if (receiptMatch) return <ReceiptPage token={receiptMatch[1]} />
 
+  const shopperMatch = path.match(/^\/shopper\/([^/]+)$/)
+  if (shopperMatch) return <ShopperLanding receiptToken={shopperMatch[1]} />
+
   if (path.startsWith('/dash')) {
     if (!sessionLoaded) return <AppShell session={session} main={<LoadingRows />} />
     if (!session) return <Login />
@@ -1284,15 +1287,17 @@ function MerchantDashboardRoute({ path, session }) {
   if (state.loading) return <AppShell session={session} main={<LoadingRows />} />
   if (state.error) return <AppShell session={session} main={<Notice tone="error">{state.error}</Notice>} />
 
-  if (path === '/dash') return <AppShell session={session} main={<Dashboard />} />
-  if (path === '/dash/products') return <AppShell session={session} main={<Products />} />
-  if (path === '/dash/stock') return <AppShell session={session} main={<SmartStock />} />
-  if (path === '/dash/smart-add') return <AppShell session={session} main={<SmartAddDashboard />} />
-  if (path === '/dash/import') return <AppShell session={session} main={<CsvImport />} />
-  if (path === '/dash/qr') return <AppShell session={session} main={<QrPage />} />
-  if (path === '/dash/verify') return <AppShell session={session} main={<VerifyReceipt />} />
-  if (path === '/dash/orders') return <AppShell session={session} main={<Orders />} />
-  if (path === '/dash/staff') return <AppShell session={session} main={<StaffManagement />} />
+  const shell = (main) => <AppShell session={session} profile={state.profile} main={main} />
+  if (path === '/dash') return shell(<Dashboard />)
+  if (path === '/dash/products') return shell(<Products />)
+  if (path === '/dash/stock') return shell(<SmartStock />)
+  if (path === '/dash/smart-add') return shell(<SmartAddDashboard />)
+  if (path === '/dash/import') return shell(<CsvImport />)
+  if (path === '/dash/qr') return shell(<QrPage />)
+  if (path === '/dash/verify') return shell(<VerifyReceipt />)
+  if (path === '/dash/orders') return shell(<Orders />)
+  if (path === '/dash/payments') return shell(<Payments />)
+  if (path === '/dash/staff') return shell(<StaffManagement />)
 
   return <NotFound />
 }
@@ -1621,11 +1626,12 @@ function StoreSetup({ session }) {
   )
 }
 
-function AppShell({ session, main }) {
+function AppShell({ session, profile, main }) {
   const path = usePath()
   const navItems = [
     { href: '/dash', label: 'Overview', icon: 'grid' },
     { href: '/dash/orders', label: 'Orders', icon: 'receipt' },
+    { href: '/dash/payments', label: 'Payments', icon: 'payment' },
     { href: '/dash/products', label: 'Inventory', icon: 'box' },
     { href: '/dash/stock', label: 'Smart Stock', icon: 'stock' },
     { href: '/dash/qr', label: 'Store QR', icon: 'qr' },
@@ -1649,10 +1655,10 @@ function AppShell({ session, main }) {
           <span>Store</span>
         </div>
         <div className="store-identity">
-          <span aria-hidden="true">F</span>
+          <span aria-hidden="true">{profile?.store_name?.charAt(0)?.toUpperCase() || 'G'}</span>
           <div>
-            <strong>Foodco Stores</strong>
-            <small>Akobo</small>
+            <strong>{profile?.store_name || 'Glide store'}</strong>
+            <small>{profile?.branch_name || 'Store workspace'}</small>
           </div>
         </div>
         <p className="workspace-label">Workspace</p>
@@ -1723,6 +1729,9 @@ function Dashboard() {
     averageOrderValue: 0,
     recentOrders: [],
     topProducts: [],
+    paymentSummary: { paid: 0, pending: 0, failed: 0, volume: 0, successRate: 0 },
+    recentPayments: [],
+    customerInsights: { feedbackCount: 0, averageRating: 0, earlyAccessSignups: 0 },
     storeName: '',
     branchName: '',
     ...(state.data || {}),
@@ -1763,9 +1772,9 @@ function Dashboard() {
           <small>Verified payments only</small>
         </div>
         <div>
-          <span>Orders today</span>
-          <strong>{String(data.todayPaidOrders).padStart(2, '0')}</strong>
-          <small>{data.todayPaidOrders} currently active</small>
+          <span>Payment success</span>
+          <strong>{data.paymentSummary.successRate}%</strong>
+          <small>{data.paymentSummary.failed} failed this week</small>
         </div>
         <div>
           <span>Ready for exit</span>
@@ -1826,7 +1835,29 @@ function Dashboard() {
                 <strong>Review stock levels</strong>
                 <b aria-hidden="true">-&gt;</b>
               </Link>
+              <Link href="/dash/payments">
+                <small>Money flow</small>
+                <strong>Track every payment</strong>
+                <b aria-hidden="true">-&gt;</b>
+              </Link>
             </aside>
+          </div>
+          <div className="dashboard-insight-grid">
+            <section className="dashboard-insight-card payment-health-card">
+              <header><div><span>Last 7 days</span><h2>Payment health</h2></div><Link href="/dash/payments">Open payments</Link></header>
+              <div className="payment-health-meter"><span style={{ width: `${data.paymentSummary.successRate}%` }} /></div>
+              <div className="payment-health-numbers">
+                <div><strong>{data.paymentSummary.paid}</strong><span>Successful</span></div>
+                <div><strong>{data.paymentSummary.pending}</strong><span>Pending</span></div>
+                <div><strong>{data.paymentSummary.failed}</strong><span>Failed</span></div>
+                <div><strong>{formatMoney(data.paymentSummary.volume)}</strong><span>Processed</span></div>
+              </div>
+            </section>
+            <section className="dashboard-insight-card customer-pulse-card">
+              <header><div><span>Customer pulse</span><h2>Experience signals</h2></div></header>
+              <div className="customer-pulse-score"><strong>{data.customerInsights.averageRating ? data.customerInsights.averageRating.toFixed(1) : '—'}</strong><span>average rating</span></div>
+              <div className="customer-pulse-meta"><span>{data.customerInsights.feedbackCount} responses</span><span>{data.customerInsights.earlyAccessSignups} early-access signups</span></div>
+            </section>
           </div>
         </>
       )}
@@ -5424,6 +5455,109 @@ function PaymentReturn({ receiptToken }) {
   )
 }
 
+function ShopperLanding({ receiptToken }) {
+  const [order, setOrder] = useState(null)
+  const [rating, setRating] = useState(0)
+  const [tags, setTags] = useState([])
+  const [comment, setComment] = useState('')
+  const [feedbackDone, setFeedbackDone] = useState(false)
+  const [signupDone, setSignupDone] = useState(false)
+  const [profile, setProfile] = useState({ fullName: '', email: '', phone: '', offers: false })
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  const feedbackTags = ['Fast checkout', 'Easy to use', 'Helpful staff', 'Clean store', 'Payment issue', 'Could be clearer']
+
+  useEffect(() => {
+    callFunction('shopper-experience', { action: 'load', receiptToken }, false)
+      .then((result) => setOrder(result.order))
+      .catch((error) => setMessage(error.message))
+  }, [receiptToken])
+
+  function toggleTag(tag) {
+    setTags((current) => current.includes(tag) ? current.filter((item) => item !== tag) : [...current, tag])
+  }
+
+  async function submitFeedback(event) {
+    event.preventDefault()
+    setBusy(true)
+    setMessage('')
+    try {
+      await callFunction('shopper-experience', { action: 'feedback', receiptToken, rating, tags, comment }, false)
+      setFeedbackDone(true)
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function joinEarlyAccess(event) {
+    event.preventDefault()
+    setBusy(true)
+    setMessage('')
+    try {
+      await callFunction('shopper-experience', { action: 'early-access', receiptToken, ...profile }, false)
+      setSignupDone(true)
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <main className="shopper-home">
+      <nav><Link className="brand" href="/">Glide</Link><span>Checkout complete</span></nav>
+      <section className="shopper-welcome">
+        <div className="shopper-success-mark" aria-hidden="true">✓</div>
+        <p className="eyebrow">You are all set</p>
+        <h1>Thanks for shopping at {order?.storeName || 'the store'}.</h1>
+        <p>Your payment is complete and your receipt remains available whenever you need it.</p>
+        <div className="shopper-welcome-actions">
+          <Link className="primary-action" href={`/receipt/${receiptToken}`}>View receipt</Link>
+          <span>{order?.orderNumber || 'Loading order...'}</span>
+        </div>
+      </section>
+
+      {message ? <Notice tone="warning">{message}</Notice> : null}
+      <section className="shopper-after-grid">
+        <form className="shopper-feedback-card" onSubmit={submitFeedback}>
+          <span className="eyebrow">30-second feedback</span>
+          <h2>{feedbackDone ? 'Thank you for helping us improve.' : 'How was your checkout?'}</h2>
+          {feedbackDone ? <div className="shopper-thanks">Your feedback has been shared with the store.</div> : (
+            <>
+              <div className="rating-buttons" aria-label="Rate checkout from 1 to 5">
+                {[
+                  [1, '😣'], [2, '😕'], [3, '🙂'], [4, '😊'], [5, '🤩'],
+                ].map(([value, emoji]) => <button className={rating === value ? 'active' : ''} key={value} type="button" onClick={() => setRating(value)}><span>{emoji}</span><small>{value}</small></button>)}
+              </div>
+              <div className="feedback-tags">
+                {feedbackTags.map((tag) => <button className={tags.includes(tag) ? 'active' : ''} key={tag} type="button" onClick={() => toggleTag(tag)}>{tag}</button>)}
+              </div>
+              <textarea placeholder="Anything else we should know? (optional)" value={comment} onChange={(event) => setComment(event.target.value)} />
+              <button disabled={busy || !rating} type="submit">Send feedback</button>
+            </>
+          )}
+        </form>
+
+        <form className="shopper-early-card" onSubmit={joinEarlyAccess}>
+          <span className="early-badge">Early access</span>
+          <h2>{signupDone ? 'You are on the list.' : 'Make every store visit move faster.'}</h2>
+          <p>{signupDone ? 'We will let you know when your Glide shopper profile is ready.' : 'Save receipts, get smarter offers and enjoy quicker checkout with the upcoming Glide shopper experience.'}</p>
+          {!signupDone ? <>
+            <input required placeholder="Your name" value={profile.fullName} onChange={(event) => setProfile((current) => ({ ...current, fullName: event.target.value }))} />
+            <input required type="email" placeholder="Email address" value={profile.email} onChange={(event) => setProfile((current) => ({ ...current, email: event.target.value }))} />
+            <input inputMode="tel" placeholder="Phone number (optional)" value={profile.phone} onChange={(event) => setProfile((current) => ({ ...current, phone: event.target.value }))} />
+            <label className="shopper-consent"><input type="checkbox" checked={profile.offers} onChange={(event) => setProfile((current) => ({ ...current, offers: event.target.checked }))} /><span>Send me relevant store offers. I can opt out anytime.</span></label>
+            <button disabled={busy} type="submit">Join early access</button>
+          </> : null}
+        </form>
+      </section>
+      <footer className="shopper-footer"><strong>Glide</strong><span>Scan. Pay. Go.</span></footer>
+    </main>
+  )
+}
+
 function ReceiptPage({ token }) {
   const [order, setOrder] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -5441,7 +5575,7 @@ function ReceiptPage({ token }) {
     )
 
     checkoutKeys.forEach((key) => sessionStorage.removeItem(key))
-    window.location.assign('/')
+    window.location.assign(`/shopper/${token}`)
   }
 
   useEffect(() => {
@@ -5724,6 +5858,55 @@ function SecurityPage({ session }) {
       {message ? <Notice tone="success">{message}</Notice> : null}
       <VerifyReceipt />
     </main>
+  )
+}
+
+function Payments() {
+  const [payments, setPayments] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState('all')
+  const [query, setQuery] = useState('')
+
+  const loadPayments = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true)
+    const { data } = await supabase
+      .from('payments')
+      .select('id,status,amount,provider,provider_reference,created_at,paid_at,orders(order_number,receipt_token,customer_email)')
+      .order('created_at', { ascending: false })
+      .limit(250)
+    setPayments(data || [])
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { loadPayments(true) }, [loadPayments])
+  useRealtimeRefresh('payments-workspace-live', ['payments', 'orders'], () => loadPayments(false))
+
+  const visible = payments.filter((payment) => {
+    const matchesStatus = filter === 'all' || payment.status === filter
+    const haystack = `${payment.provider_reference} ${payment.orders?.order_number} ${payment.orders?.customer_email}`.toLowerCase()
+    return matchesStatus && haystack.includes(query.toLowerCase())
+  })
+  const paid = payments.filter((payment) => payment.status === 'paid')
+  const total = paid.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+  const successRate = payments.length ? Math.round((paid.length / payments.length) * 100) : 0
+
+  return (
+    <section className="dash-section payments-page">
+      <div className="payments-heading"><PageTitle title="Payments" subtitle="Monitor successful, pending and failed transactions in real time." /><button type="button" onClick={() => loadPayments(true)}>Refresh</button></div>
+      <div className="payment-kpi-grid">
+        <div><span>Processed</span><strong>{formatMoney(total)}</strong><small>{paid.length} successful payments</small></div>
+        <div><span>Success rate</span><strong>{successRate}%</strong><small>Across loaded transactions</small></div>
+        <div><span>Pending</span><strong>{payments.filter((payment) => payment.status === 'pending').length}</strong><small>Awaiting confirmation</small></div>
+        <div><span>Failed</span><strong>{payments.filter((payment) => payment.status === 'failed').length}</strong><small>Needs attention</small></div>
+      </div>
+      <div className="payments-toolbar">
+        <input placeholder="Search order, reference or customer" value={query} onChange={(event) => setQuery(event.target.value)} />
+        <div>{['all', 'paid', 'pending', 'failed'].map((status) => <button className={filter === status ? 'active' : ''} key={status} type="button" onClick={() => setFilter(status)}>{status}</button>)}</div>
+      </div>
+      {loading ? <LoadingRows /> : visible.length ? <div className="table-wrap payments-table"><table><thead><tr><th>Order</th><th>Reference</th><th>Provider</th><th>Amount</th><th>Status</th><th>Created</th><th>Receipt</th></tr></thead><tbody>
+        {visible.map((payment) => <tr key={payment.id}><td><strong>{payment.orders?.order_number || 'Unlinked'}</strong><small>{payment.orders?.customer_email || ''}</small></td><td className="payment-reference">{payment.provider_reference}</td><td>{String(payment.provider || '').replaceAll('_', ' ')}</td><td>{formatMoney(payment.amount)}</td><td><StatusPill tone={payment.status === 'paid' ? 'success' : payment.status === 'failed' ? 'warning' : 'neutral'}>{payment.status}</StatusPill></td><td>{formatDateTime(payment.created_at)}</td><td>{payment.orders?.receipt_token ? <Link href={`/receipt/${payment.orders.receipt_token}`}>Open</Link> : '—'}</td></tr>)}
+      </tbody></table></div> : <EmptyState>No payments match this view.</EmptyState>}
+    </section>
   )
 }
 
