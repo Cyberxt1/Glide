@@ -4463,6 +4463,7 @@ function CustomerCheckout({ qrCode }) {
   const [addToast, setAddToast] = useState(null)
   const [scanResult, setScanResult] = useState(null)
   const [pendingScan, setPendingScan] = useState(null)
+  const [spendLimit, setSpendLimit] = useState(() => Number(localStorage.getItem(`glide:spend-limit:${qrCode}`)) || 0)
   const videoRef = useRef(null)
   const toastTimerRef = useRef(null)
   const idleTimerRef = useRef(null)
@@ -4483,6 +4484,12 @@ function CustomerCheckout({ qrCode }) {
   const cartStorageKey = `glide:checkout:${qrCode}:cart`
   const activityStorageKey = `glide:checkout:${qrCode}:lastActivity`
   const networkWarningKey = `glide:checkout:${qrCode}:networkWarningShown`
+  const spendLimitKey = `glide:spend-limit:${qrCode}`
+
+  useEffect(() => {
+    if (spendLimit > 0) localStorage.setItem(spendLimitKey, String(spendLimit))
+    else localStorage.removeItem(spendLimitKey)
+  }, [spendLimit, spendLimitKey])
 
   useEffect(() => {
     let nextSessionId = sessionStorage.getItem(sessionStorageKey)
@@ -5071,6 +5078,10 @@ function CustomerCheckout({ qrCode }) {
 
   async function checkout() {
     noteActivity(true)
+    if (spendLimit > 0 && total > spendLimit) {
+      const continueOverLimit = window.confirm(`Your cart is ${formatMoney(total - spendLimit)} above your spend limit. Continue to payment?`)
+      if (!continueOverLimit) return
+    }
     const confirmed = window.confirm('Have you confirmed everything in the cart is accurate?')
     if (!confirmed) return
 
@@ -5220,9 +5231,30 @@ function CustomerCheckout({ qrCode }) {
             setActiveTab('cart')
           }}
         >
-          Cart
+          <span className="cart-tab-label">Cart{cartCount ? <b>{cartCount}</b> : null}</span>
         </button>
       </nav>
+
+      <section className={`spend-limit-card ${spendLimit > 0 && total > spendLimit ? 'over' : ''}`}>
+        <div>
+          <span>Spend limit</span>
+          <strong>{spendLimit > 0 ? formatMoney(spendLimit) : 'Not set'}</strong>
+          {spendLimit > 0 ? <small>{total > spendLimit ? `${formatMoney(total - spendLimit)} over limit` : `${formatMoney(spendLimit - total)} remaining`}</small> : <small>Set a budget for this shopping trip</small>}
+        </div>
+        <label>
+          <span>₦</span>
+          <input
+            aria-label="Shopping spend limit"
+            inputMode="decimal"
+            min="0"
+            placeholder="Set limit"
+            type="number"
+            value={spendLimit || ''}
+            onChange={(event) => setSpendLimit(Math.max(0, Number(event.target.value) || 0))}
+          />
+        </label>
+        {spendLimit > 0 ? <div className="spend-progress"><span style={{ width: `${Math.min(100, (total / spendLimit) * 100)}%` }} /></div> : null}
+      </section>
 
       {networkWarning ? <Notice tone="warning">{networkWarning}</Notice> : null}
       {message ? <Notice tone="warning">{message}</Notice> : null}
@@ -5347,7 +5379,7 @@ function CustomerCheckout({ qrCode }) {
         <section className="cart-panel active">
           <div className="cart-title-row">
             <h1>Your cart</h1>
-            <strong>{cartCount} items</strong>
+            <strong className="cart-title-count">{cartCount}</strong>
           </div>
           {cart.length ? (
             <>
