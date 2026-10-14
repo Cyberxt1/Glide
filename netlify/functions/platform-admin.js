@@ -57,6 +57,9 @@ async function adminProfile(user) {
 }
 
 async function summary(supabase) {
+  const analyticsStart = new Date()
+  analyticsStart.setUTCHours(0, 0, 0, 0)
+  analyticsStart.setUTCDate(analyticsStart.getUTCDate() - 13)
   const [
     merchantCount,
     productCount,
@@ -67,6 +70,7 @@ async function summary(supabase) {
     staffCount,
     activeStaffCount,
     hiddenGlobalProductCount,
+    pendingMerchantCount,
     recentMerchants,
     recentGlobalProducts,
     recentAudit,
@@ -81,9 +85,10 @@ async function summary(supabase) {
     tableCount(supabase, 'staff_members'),
     tableCount(supabase, 'staff_members', (request) => request.eq('is_active', true)),
     tableCount(supabase, 'global_products', (request) => request.eq('is_hidden', true)),
+    tableCount(supabase, 'merchant_profile', (request) => request.eq('onboarding_status', 'pending')),
     supabase
       .from('merchant_profile')
-      .select('id,store_name,branch_name,created_at')
+      .select('id,store_name,branch_name,onboarding_status,geofence_enabled,geofence_radius_meters,created_at')
       .order('created_at', { ascending: false })
       .limit(8),
     supabase
@@ -104,6 +109,50 @@ async function summary(supabase) {
   if (recentAudit.error) throw recentAudit.error
   if (paidOrders.error) throw paidOrders.error
 
+  const [trendOrders, feedback, signups, receiptFailures, storePerformance, recentEvents] = await Promise.all([
+    supabase.from('orders').select('id,merchant_id,total_amount,payment_status,status,created_at').gte('created_at', analyticsStart.toISOString()).order('created_at'),
+    supabase.from('shopper_feedback').select('rating,created_at').gte('created_at', analyticsStart.toISOString()),
+    supabase.from('shopper_app_signups').select('id,created_at').gte('created_at', analyticsStart.toISOString()),
+    supabase.from('orders').select('id', { count: 'exact', head: true }).eq('receipt_delivery_status', 'failed'),
+    supabase.from('merchant_profile').select('id,store_name,branch_name,onboarding_status,geofence_enabled,orders(id,total_amount,payment_status,created_at)').limit(100),
+    supabase.from('platform_system_logs').select('id,event_type,severity,message,created_at,merchant_profile(store_name)').order('created_at', { ascending: false }).limit(6),
+  ])
+
+  const analyticsError = [trendOrders.error, feedback.error, signups.error, receiptFailures.error, storePerformance.error, recentEvents.error].find(Boolean)
+  if (analyticsError) throw analyticsError
+
+  const orderRows = trendOrders.data || []
+  const dailyTrend = Array.from({ length: 14 }, (_, index) => {
+    const day = new Date(analyticsStart)
+    day.setUTCDate(day.getUTCDate() + index)
+    const key = day.toISOString().slice(0, 10)
+    const rows = orderRows.filter((order) => order.created_at.slice(0, 10) === key)
+    const paid = rows.filter((order) => order.payment_status === 'paid')
+    return {
+      date: key,
+      label: day.toLocaleDateString('en', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
+      orders: rows.length,
+      paidOrders: paid.length,
+      revenue: paid.reduce((sum, order) => sum + Number(order.total_amount || 0), 0),
+    }
+  })
+  const today = dailyTrend.at(-1) || { orders: 0, paidOrders: 0, revenue: 0 }
+  const yesterday = dailyTrend.at(-2) || { orders: 0, paidOrders: 0, revenue: 0 }
+  const ratingRows = feedback.data || []
+  const storeRows = (storePerformance.data || []).map((store) => {
+    const paid = (store.orders || []).filter((order) => order.payment_status === 'paid')
+    return {
+      id: store.id,
+      store_name: store.store_name,
+      branch_name: store.branch_name,
+      onboarding_status: store.onboarding_status,
+      geofence_enabled: store.geofence_enabled,
+      orders: store.orders?.length || 0,
+      paid_orders: paid.length,
+      revenue: paid.reduce((sum, order) => sum + Number(order.total_amount || 0), 0),
+    }
+  }).sort((a, b) => b.revenue - a.revenue).slice(0, 6)
+
   return {
     merchantCount,
     productCount,
@@ -114,6 +163,7 @@ async function summary(supabase) {
     staffCount,
     activeStaffCount,
     hiddenGlobalProductCount,
+    pendingMerchantCount,
     totalRevenue: (paidOrders.data || []).reduce(
       (sum, order) => sum + Number(order.total_amount || 0),
       0,
@@ -121,13 +171,24 @@ async function summary(supabase) {
     recentMerchants: recentMerchants.data || [],
     recentGlobalProducts: recentGlobalProducts.data || [],
     recentAudit: recentAudit.data || [],
+    dailyTrend,
+    today,
+    yesterday,
+    averageRating: ratingRows.length ? ratingRows.reduce((sum, row) => sum + Number(row.rating), 0) / ratingRows.length : 0,
+    feedbackCount: ratingRows.length,
+    interestCount: signups.data?.length || 0,
+    receiptFailureCount: receiptFailures.count || 0,
+    approvedStoreCount: (storePerformance.data || []).filter((store) => store.onboarding_status === 'approved').length,
+    geofencedStoreCount: (storePerformance.data || []).filter((store) => store.geofence_enabled).length,
+    storePerformance: storeRows,
+    recentEvents: recentEvents.data || [],
   }
 }
 
 async function listMerchants(supabase) {
   const result = await supabase
     .from('merchant_profile')
-    .select('id,user_id,store_name,branch_name,created_at,updated_at,products(id),orders(id,total_amount,payment_status,status),staff_members(id,is_active)')
+    .select('id,user_id,store_name,branch_name,onboarding_status,onboarding_submitted_at,onboarding_reviewed_at,onboarding_review_note,geofence_enabled,geofence_latitude,geofence_longitude,geofence_radius_meters,created_at,updated_at,products(id),orders(id,total_amount,payment_status,status),staff_members(id,is_active)')
     .order('created_at', { ascending: false })
     .limit(50)
 
@@ -142,6 +203,14 @@ async function listMerchants(supabase) {
         owner_email: ownerResult?.data?.user?.email || 'Unknown owner',
         store_name: merchant.store_name,
         branch_name: merchant.branch_name,
+        onboarding_status: merchant.onboarding_status,
+        onboarding_submitted_at: merchant.onboarding_submitted_at,
+        onboarding_reviewed_at: merchant.onboarding_reviewed_at,
+        onboarding_review_note: merchant.onboarding_review_note,
+        geofence_enabled: merchant.geofence_enabled,
+        geofence_latitude: merchant.geofence_latitude,
+        geofence_longitude: merchant.geofence_longitude,
+        geofence_radius_meters: merchant.geofence_radius_meters,
         created_at: merchant.created_at,
         updated_at: merchant.updated_at,
         products_count: merchant.products?.length || 0,
@@ -351,7 +420,7 @@ async function setStaffActive(supabase, id, isActive) {
 async function listOrders(supabase) {
   const result = await supabase
     .from('orders')
-    .select('id,order_number,status,payment_status,total_amount,created_at,paid_at,exited_at,merchant_profile(store_name,branch_name)')
+    .select('id,order_number,status,payment_status,total_amount,customer_email,receipt_delivery_status,receipt_sent_at,created_at,paid_at,exited_at,verification_outcome,checkout_duration_seconds,merchant_profile(store_name,branch_name),payments(provider,provider_reference,status,amount,created_at),verification_records(outcome,reason_codes,incident_note,balance_collected,balance_payment_method,created_at)')
     .order('created_at', { ascending: false })
     .limit(100)
 
@@ -366,6 +435,55 @@ async function listAudit(supabase) {
     .order('created_at', { ascending: false })
     .limit(100)
 
+  if (result.error) throw result.error
+  return result.data || []
+}
+
+async function reviewMerchant(supabase, id, decision, note) {
+  const merchantId = cleanText(id, 80)
+  if (!merchantId) throw new Error('Store id is required.')
+  if (!['approved', 'rejected', 'suspended'].includes(decision)) throw new Error('Invalid review decision.')
+
+  const result = await supabase
+    .from('merchant_profile')
+    .update({
+      onboarding_status: decision,
+      onboarding_reviewed_at: new Date().toISOString(),
+      onboarding_review_note: cleanText(note, 1000) || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', merchantId)
+    .select('id,store_name,branch_name,onboarding_status,onboarding_reviewed_at,onboarding_review_note')
+    .single()
+  if (result.error) throw result.error
+
+  await supabase.from('qr_codes').update({ is_active: decision === 'approved' }).eq('merchant_id', merchantId)
+  await supabase.from('platform_system_logs').insert({
+    merchant_id: merchantId,
+    event_type: `store_${decision}`,
+    severity: decision === 'approved' ? 'info' : 'warning',
+    message: `${result.data.store_name} was ${decision}.`,
+    details: { note: cleanText(note, 1000) || null },
+  })
+  return result.data
+}
+
+async function listCustomerInsights(supabase) {
+  const [feedback, interest] = await Promise.all([
+    supabase.from('shopper_feedback').select('id,rating,tags,comment,created_at,merchant_profile(store_name,branch_name),orders(order_number)').order('created_at', { ascending: false }).limit(200),
+    supabase.from('shopper_app_signups').select('id,email,full_name,phone,offers,early_access,created_at,merchant_profile(store_name,branch_name)').order('created_at', { ascending: false }).limit(200),
+  ])
+  if (feedback.error) throw feedback.error
+  if (interest.error) throw interest.error
+  return { feedback: feedback.data || [], interest: interest.data || [] }
+}
+
+async function listSystemLogs(supabase) {
+  const result = await supabase
+    .from('platform_system_logs')
+    .select('id,event_type,severity,message,details,created_at,merchant_profile(store_name,branch_name)')
+    .order('created_at', { ascending: false })
+    .limit(250)
   if (result.error) throw result.error
   return result.data || []
 }
@@ -415,6 +533,20 @@ export async function handler(event) {
 
     if (body.action === 'list-audit') {
       return json(200, { auditLogs: await listAudit(supabase) })
+    }
+
+    if (body.action === 'list-customer-insights') {
+      return json(200, await listCustomerInsights(supabase))
+    }
+
+    if (body.action === 'list-system-logs') {
+      return json(200, { logs: await listSystemLogs(supabase) })
+    }
+
+    if (body.action === 'review-merchant') {
+      const merchant = await reviewMerchant(supabase, body.id, cleanText(body.decision, 20), body.note)
+      await audit(supabase, user, `merchant_${merchant.onboarding_status}`, { merchant_id: merchant.id, note: merchant.onboarding_review_note })
+      return json(200, { merchant })
     }
 
     if (body.action === 'update-merchant') {

@@ -5,10 +5,27 @@ create table if not exists public.merchant_profile (
   user_id uuid not null unique references auth.users(id) on delete cascade,
   store_name text not null default 'Glide Store',
   branch_name text not null default 'Main branch',
-  terminal_auth_code text,
+  terminal_auth_code text default upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)),
+  geofence_latitude double precision,
+  geofence_longitude double precision,
+  geofence_radius_meters integer not null default 150 check (geofence_radius_meters between 25 and 5000),
+  geofence_enabled boolean not null default false,
+  onboarding_status text not null default 'approved' check (onboarding_status in ('draft', 'pending', 'approved', 'rejected', 'suspended')),
+  onboarding_submitted_at timestamptz,
+  onboarding_reviewed_at timestamptz,
+  onboarding_review_note text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.merchant_profile add column if not exists geofence_latitude double precision;
+alter table public.merchant_profile add column if not exists geofence_longitude double precision;
+alter table public.merchant_profile add column if not exists geofence_radius_meters integer not null default 150;
+alter table public.merchant_profile add column if not exists geofence_enabled boolean not null default false;
+alter table public.merchant_profile add column if not exists onboarding_status text not null default 'approved';
+alter table public.merchant_profile add column if not exists onboarding_submitted_at timestamptz;
+alter table public.merchant_profile add column if not exists onboarding_reviewed_at timestamptz;
+alter table public.merchant_profile add column if not exists onboarding_review_note text;
 
 create table if not exists public.staff_members (
   id uuid primary key default gen_random_uuid(),
@@ -18,7 +35,7 @@ create table if not exists public.staff_members (
   full_name text,
   role text not null default 'cashier' check (role in ('cashier', 'security')),
   is_active boolean not null default true,
-  terminal_auth_code text,
+  terminal_auth_code text default upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)),
   last_seen_at timestamptz,
   current_station text,
   created_at timestamptz not null default now(),
@@ -73,6 +90,8 @@ create table if not exists public.orders (
   exit_token text not null unique,
   paid_at timestamptz,
   exited_at timestamptz,
+  receipt_delivery_status text not null default 'not_requested' check (receipt_delivery_status in ('not_requested', 'pending', 'sent', 'failed')),
+  receipt_sent_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

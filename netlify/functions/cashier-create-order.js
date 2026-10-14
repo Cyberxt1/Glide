@@ -84,6 +84,19 @@ export async function handler(event) {
       paid_at: new Date().toISOString(),
     })
 
+    await supabase.from('order_events').insert([
+      { order_id: orderResult.data.id, merchant_id: access.merchant.id, staff_member_id: access.staff?.id || null, event_type: 'assisted_checkout', event_label: 'Assisted checkout created', details: { payment_type: paymentType || 'Cash', item_count: items.reduce((sum, item) => sum + item.quantity, 0) } },
+      { order_id: orderResult.data.id, merchant_id: access.merchant.id, staff_member_id: access.staff?.id || null, event_type: 'payment_confirmed', event_label: 'Counter payment recorded', details: { amount: total } },
+    ])
+
+    const openShift = await supabase.from('cashier_shifts').select('id,assisted_sales,cash_collected').eq('user_id', access.user.id).eq('station', 'cashier').is('ended_at', null).maybeSingle()
+    if (openShift.data) {
+      await supabase.from('cashier_shifts').update({
+        assisted_sales: Number(openShift.data.assisted_sales || 0) + 1,
+        cash_collected: Number(openShift.data.cash_collected || 0) + (String(paymentType || '').toLowerCase() === 'cash' ? total : 0),
+      }).eq('id', openShift.data.id)
+    }
+
     for (const item of items) {
       const product = productsResult.data.find((row) => row.id === item.product_id)
       if (!product?.track_inventory) continue

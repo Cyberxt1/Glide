@@ -35,6 +35,19 @@ function paystackSecretKey() {
     .replace(/^['"]|['"]$/g, '')
 }
 
+function distanceInMeters(a, b) {
+  const toRadians = (value) => (value * Math.PI) / 180
+  const earthRadius = 6371000
+  const latitudeDelta = toRadians(b.latitude - a.latitude)
+  const longitudeDelta = toRadians(b.longitude - a.longitude)
+  const latitudeA = toRadians(a.latitude)
+  const latitudeB = toRadians(b.latitude)
+  const value =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(latitudeA) * Math.cos(latitudeB) * Math.sin(longitudeDelta / 2) ** 2
+  return earthRadius * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value))
+}
+
 async function parseProviderResponse(response) {
   const text = await response.text()
   if (!text) return {}
@@ -51,7 +64,7 @@ async function ensureShopperSessionIsActive(supabase, shopperSessionId) {
 
   const sessionResult = await supabase
     .from('shopper_sessions')
-    .select('id,ended_at,expires_at')
+    .select('id,ended_at,expires_at,created_at')
     .eq('session_id', shopperSessionId)
     .maybeSingle()
 
@@ -75,8 +88,10 @@ export async function handler(event) {
 
   try {
     const supabase = adminClient()
-    const { qrCode, cart, shopperSessionId } = JSON.parse(event.body || '{}')
-    const paymentEmail = fallbackEmail(shopperSessionId)
+    const { qrCode, cart, shopperSessionId, location, customerEmail } = JSON.parse(event.body || '{}')
+    const cleanCustomerEmail = String(customerEmail || '').trim().toLowerCase()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanCustomerEmail)) return bad('Enter a valid email for your receipt.')
+    const paymentEmail = cleanCustomerEmail || fallbackEmail(shopperSessionId)
     const secretKey = paystackSecretKey()
 
     if (!qrCode || !Array.isArray(cart) || cart.length === 0) {
@@ -104,12 +119,34 @@ export async function handler(event) {
 
     const qrResult = await supabase
       .from('qr_codes')
-      .select('id,merchant_id,qr_code,is_active,merchant_profile(store_name)')
+      .select('id,merchant_id,qr_code,is_active,merchant_profile(store_name,geofence_enabled,geofence_latitude,geofence_longitude,geofence_radius_meters)')
       .eq('qr_code', qrCode)
       .eq('is_active', true)
       .single()
 
     if (qrResult.error) return bad('Store QR is inactive.')
+
+    const storeProfile = qrResult.data.merchant_profile
+    if (storeProfile?.geofence_enabled) {
+      const shopperLatitude = Number(location?.latitude)
+      const shopperLongitude = Number(location?.longitude)
+      const accuracy = Math.max(0, Number(location?.accuracy) || 0)
+      const storeLatitude = Number(storeProfile.geofence_latitude)
+      const storeLongitude = Number(storeProfile.geofence_longitude)
+
+      if (![shopperLatitude, shopperLongitude, storeLatitude, storeLongitude].every(Number.isFinite)) {
+        return bad('Location is required to shop at this store. Enable precise location and try again.')
+      }
+
+      const distance = distanceInMeters(
+        { latitude: storeLatitude, longitude: storeLongitude },
+        { latitude: shopperLatitude, longitude: shopperLongitude },
+      )
+      const allowedRadius = Number(storeProfile.geofence_radius_meters) || 150
+      if (distance - Math.min(accuracy, 100) > allowedRadius) {
+        return bad(`You are outside this store's shopping area (${Math.round(distance)} m away).`)
+      }
+    }
 
     const productIds = cart.map((item) => item.productId)
     const productsResult = await supabase
@@ -129,6 +166,7 @@ export async function handler(event) {
       const product = products.find((item) => item.id === cartItem.productId)
 
       if (!product || !product.is_available) return bad('A product is unavailable.')
+      if (product.is_restricted) return bad(`${product.name} requires cashier assistance and cannot be paid through self-checkout.`)
       if (!Number.isInteger(quantity) || quantity < 1) return bad('Invalid quantity.')
       if (product.track_inventory && quantity > product.quantity) {
         return bad(`${product.name} is out of stock.`)
@@ -164,11 +202,26 @@ export async function handler(event) {
         total_amount: total,
         receipt_token: receiptToken,
         exit_token: exitToken,
+        customer_email: cleanCustomerEmail,
+        receipt_delivery_status: 'pending',
       })
       .select('*')
       .single()
 
     if (orderResult.error) return bad(orderResult.error.message)
+
+    const shopperSession = await supabase.from('shopper_sessions').select('created_at').eq('session_id', shopperSessionId).maybeSingle()
+    const checkoutDuration = shopperSession.data?.created_at
+      ? Math.max(0, Math.round((Date.now() - new Date(shopperSession.data.created_at).getTime()) / 1000))
+      : null
+    if (checkoutDuration !== null) {
+      await supabase.from('orders').update({ checkout_duration_seconds: checkoutDuration }).eq('id', orderResult.data.id)
+    }
+    await supabase.from('order_events').insert([
+      { order_id: orderResult.data.id, merchant_id: qrResult.data.merchant_id, event_type: 'session_started', event_label: 'Store QR session started', details: { shopper_session_id: shopperSessionId } },
+      { order_id: orderResult.data.id, merchant_id: qrResult.data.merchant_id, event_type: 'basket_confirmed', event_label: 'Basket confirmed', details: { item_count: items.reduce((sum, item) => sum + item.quantity, 0), total } },
+      { order_id: orderResult.data.id, merchant_id: qrResult.data.merchant_id, event_type: 'payment_initiated', event_label: 'Paystack payment initiated', details: { reference: `pending` } },
+    ])
 
     const orderItems = items.map((item) => ({ ...item, order_id: orderResult.data.id }))
     const itemResult = await supabase.from('order_items').insert(orderItems)
@@ -190,6 +243,7 @@ export async function handler(event) {
       .single()
 
     if (paymentResult.error) return bad(paymentResult.error.message)
+    await supabase.from('order_events').update({ details: { reference } }).eq('order_id', orderResult.data.id).eq('event_type', 'payment_initiated')
 
     const response = await fetch('https://api.paystack.co/transaction/initialize', {
       method: 'POST',

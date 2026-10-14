@@ -8,7 +8,7 @@ import { formatDateTime, formatMoney } from './lib/format'
 import { getConfigMessage, isSupabaseConfigured, supabase } from './lib/supabase'
 
 const productColumns =
-  'id,name,barcode,sku,category,price,quantity,low_stock_threshold,is_available,track_inventory,size,unit_label,pack_label,units_per_pack,pack_price,created_at'
+  'id,name,barcode,sku,category,price,quantity,low_stock_threshold,is_available,track_inventory,size,unit_label,pack_label,units_per_pack,pack_price,entry_mode,is_restricted,requires_quantity_entry,created_at'
 
 const emptyProduct = {
   name: '',
@@ -25,10 +25,24 @@ const emptyProduct = {
   is_available: true,
   track_inventory: true,
   size: '',
+  entry_mode: 'barcode',
+  is_restricted: false,
+  requires_quantity_entry: false,
 }
 
 const SHOPPER_IDLE_TIMEOUT_MS = 20 * 60 * 1000
 const SESSION_ACTIVITY_WRITE_MS = 15 * 1000
+
+function distanceInMeters(a, b) {
+  const toRadians = (value) => (value * Math.PI) / 180
+  const earthRadius = 6371000
+  const latitudeDelta = toRadians(b.latitude - a.latitude)
+  const longitudeDelta = toRadians(b.longitude - a.longitude)
+  const latitudeA = toRadians(a.latitude)
+  const latitudeB = toRadians(b.latitude)
+  const value = Math.sin(latitudeDelta / 2) ** 2 + Math.cos(latitudeA) * Math.cos(latitudeB) * Math.sin(longitudeDelta / 2) ** 2
+  return earthRadius * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value))
+}
 
 function usePath() {
   const [path, setPath] = useState(window.location.pathname)
@@ -107,6 +121,24 @@ function StatusPill({ children, tone = 'neutral' }) {
 
 function Notice({ children, tone = 'neutral' }) {
   return <div className={`notice ${tone}`}>{children}</div>
+}
+
+function ConfirmDialog({ dialog, onCancel, onConfirm }) {
+  if (!dialog) return null
+  return (
+    <div className="app-dialog-backdrop" role="presentation">
+      <section className="app-dialog" role="alertdialog" aria-modal="true" aria-labelledby="app-dialog-title">
+        <span className="app-dialog-mark" aria-hidden="true">!</span>
+        <p className="eyebrow">Please confirm</p>
+        <h2 id="app-dialog-title">{dialog.title}</h2>
+        <p>{dialog.message}</p>
+        <div className="app-dialog-actions">
+          <button type="button" onClick={onCancel}>{dialog.cancelLabel || 'Keep shopping'}</button>
+          <button className="danger" type="button" onClick={onConfirm}>{dialog.confirmLabel || 'Continue'}</button>
+        </div>
+      </section>
+    </div>
+  )
 }
 
 function LoadingRows() {
@@ -485,6 +517,8 @@ function PlatformAdminDashboard({ admin, session }) {
   const [staff, setStaff] = useState([])
   const [orders, setOrders] = useState([])
   const [auditLogs, setAuditLogs] = useState([])
+  const [systemLogs, setSystemLogs] = useState([])
+  const [customerInsights, setCustomerInsights] = useState({ feedback: [], interest: [] })
   const [query, setQuery] = useState('')
   const [showHiddenProducts, setShowHiddenProducts] = useState(false)
   const [productForm, setProductForm] = useState(emptyGlobalProduct)
@@ -529,7 +563,7 @@ function PlatformAdminDashboard({ admin, session }) {
 
   useRealtimeRefresh(
     'platform-admin-live',
-    ['global_products', 'merchant_profile', 'products', 'orders', 'smart_add_items'],
+    ['global_products', 'merchant_profile', 'products', 'orders', 'payments', 'verification_records', 'order_events', 'smart_add_items'],
     loadAdmin,
   )
 
@@ -575,6 +609,32 @@ function PlatformAdminDashboard({ admin, session }) {
     } finally {
       setLoading(false)
     }
+  }
+
+  async function loadCustomerInsights() {
+    setLoading(true)
+    try {
+      const result = await callFunction('platform-admin', { action: 'list-customer-insights' })
+      setCustomerInsights({ feedback: result.feedback || [], interest: result.interest || [] })
+    } catch (error) { setMessage(error.message) } finally { setLoading(false) }
+  }
+
+  async function loadSystemLogs() {
+    setLoading(true)
+    try {
+      const result = await callFunction('platform-admin', { action: 'list-system-logs' })
+      setSystemLogs(result.logs || [])
+    } catch (error) { setMessage(error.message) } finally { setLoading(false) }
+  }
+
+  async function reviewStore(merchant, decision) {
+    const note = decision === 'approved' ? '' : 'Please verify your store information and geofence, then contact Glide support for another review.'
+    try {
+      const result = await callFunction('platform-admin', { action: 'review-merchant', id: merchant.id, decision, note })
+      setMerchants((current) => current.map((item) => item.id === merchant.id ? { ...item, ...result.merchant } : item))
+      setMessage(`${merchant.store_name} ${decision}.`)
+      await loadAdmin()
+    } catch (error) { setMessage(error.message) }
   }
 
   function openMerchantEdit(merchant) {
@@ -642,8 +702,10 @@ function PlatformAdminDashboard({ admin, session }) {
       if (showHiddenProducts === true) loadAdmin()
     }
     if (tab === 'staff') loadStaff()
-    if (tab === 'orders') loadOrders()
+    if (tab === 'orders' || tab === 'reconciliation' || tab === 'mismatches') loadOrders()
     if (tab === 'audit') loadAudit()
+    if (tab === 'customers') loadCustomerInsights()
+    if (tab === 'system') loadSystemLogs()
   }
 
   function editProduct(product) {
@@ -760,13 +822,28 @@ function PlatformAdminDashboard({ admin, session }) {
     navigate('/login')
   }
 
+  const pendingStores = merchants.filter((merchant) => merchant.onboarding_status === 'pending')
+  const maxTrendRevenue = Math.max(1, ...(summary?.dailyTrend || []).map((day) => Number(day.revenue || 0)))
+  const percentChange = (current = 0, previous = 0) => previous ? Math.round(((current - previous) / previous) * 100) : current ? 100 : 0
+  const sectionTitles = {
+    overview: ['Command center', 'Live operating view across every Glide store.'],
+    merchants: ['Store network', 'Approve locations, inspect performance and manage store access.'],
+    customers: ['Shopper voice', 'Feedback and customer interest, attributed to the store visit.'],
+    system: ['System events', 'Receipt delivery, onboarding and platform signals.'],
+    orders: ['Order ledger', 'Trace every order, payment, verification and receipt delivery.'],
+    reconciliation: ['Payment reconciliation', 'Surface interrupted, pending and failed payment journeys for follow-up.'],
+    mismatches: ['Verification exceptions', 'Review basket mismatches, evidence and recovered balances across stores.'],
+    staff: ['Network access', 'Manage staff identities and store roles.'],
+    audit: ['Control audit', 'A permanent trail of platform-admin decisions.'],
+  }
+  const [sectionTitle, sectionSubtitle] = sectionTitles[activeTab] || ['Product intelligence', 'Operate Glide’s shared product network.']
+
   return (
     <main className="admin-console">
       <aside className="admin-sidebar">
-        <Link className="brand" href="/admin">
-          Glide Admin
-        </Link>
-        <span>{admin.email || session.user.email}</span>
+        <div className="admin-brand-lockup"><Link className="brand" href="/admin">Glide</Link><span>Control</span></div>
+        <div className="admin-identity"><span>GA</span><div><strong>Platform admin</strong><small>{admin.email || session.user.email}</small></div></div>
+        <p className="admin-nav-label">Operate</p>
         <nav>
           <button className={activeTab === 'overview' ? 'active' : ''} type="button" onClick={() => changeTab('overview')}>
             Overview
@@ -783,12 +860,20 @@ function PlatformAdminDashboard({ admin, session }) {
           <button className={activeTab === 'merchants' ? 'active' : ''} type="button" onClick={() => changeTab('merchants')}>
             Stores
           </button>
+          <button className={activeTab === 'customers' ? 'active' : ''} type="button" onClick={() => changeTab('customers')}>
+            Shopper voice
+          </button>
+          <button className={activeTab === 'system' ? 'active' : ''} type="button" onClick={() => changeTab('system')}>
+            System events
+          </button>
           <button className={activeTab === 'staff' ? 'active' : ''} type="button" onClick={() => changeTab('staff')}>
             Staff
           </button>
           <button className={activeTab === 'orders' ? 'active' : ''} type="button" onClick={() => changeTab('orders')}>
             Orders
           </button>
+          <button className={activeTab === 'reconciliation' ? 'active' : ''} type="button" onClick={() => changeTab('reconciliation')}>Reconciliation</button>
+          <button className={activeTab === 'mismatches' ? 'active' : ''} type="button" onClick={() => changeTab('mismatches')}>Mismatches</button>
           <button className={activeTab === 'audit' ? 'active' : ''} type="button" onClick={() => changeTab('audit')}>
             Audit
           </button>
@@ -799,63 +884,38 @@ function PlatformAdminDashboard({ admin, session }) {
       </aside>
 
       <section className="admin-main">
-        <PageTitle
-          title="Master control"
-          subtitle="Platform-level view for Glide stores, shared product data and operating health."
-        />
+        <header className="admin-page-head"><div><p className="eyebrow">Glide network · {new Date().toLocaleDateString('en', { weekday: 'long', month: 'long', day: 'numeric' })}</p><h1>{sectionTitle}</h1><p>{sectionSubtitle}</p></div><div className="admin-head-actions"><span className="live-indicator"><i />Live</span><button type="button" onClick={loadAdmin}>Refresh data</button></div></header>
         {message ? <Notice tone={message.includes('updated') || message.includes('removed') ? 'success' : 'warning'}>{message}</Notice> : null}
         {loading && !summary ? <LoadingRows /> : null}
 
         {activeTab === 'overview' ? (
-          <>
-            <div className="metric-grid">
-              <Metric label="Stores" value={summary?.merchantCount || 0} />
-              <Metric label="Store products" value={summary?.productCount || 0} />
-              <Metric label="Master products" value={summary?.globalProductCount || 0} />
-              <Metric label="Orders" value={summary?.orderCount || 0} />
-              <Metric label="Paid orders" value={summary?.paidOrderCount || 0} />
-              <Metric label="Active staff" value={`${summary?.activeStaffCount || 0}/${summary?.staffCount || 0}`} />
-              <Metric label="Revenue tracked" value={formatMoney(summary?.totalRevenue || 0)} />
+          <section className="control-overview">
+            <div className="control-kpis">
+              <article className="primary"><span>Gross network volume</span><strong>{formatMoney(summary?.totalRevenue || 0)}</strong><small>{summary?.paidOrderCount || 0} successful orders all time</small></article>
+              <article><span>Today’s volume</span><strong>{formatMoney(summary?.today?.revenue || 0)}</strong><small className={percentChange(summary?.today?.revenue, summary?.yesterday?.revenue) >= 0 ? 'up' : 'down'}>{percentChange(summary?.today?.revenue, summary?.yesterday?.revenue) >= 0 ? '↑' : '↓'} {Math.abs(percentChange(summary?.today?.revenue, summary?.yesterday?.revenue))}% vs yesterday</small></article>
+              <article><span>Orders today</span><strong>{summary?.today?.orders || 0}</strong><small>{summary?.today?.paidOrders || 0} paid successfully</small></article>
+              <article><span>Active stores</span><strong>{summary?.approvedStoreCount || 0}</strong><small>{summary?.geofencedStoreCount || 0} protected by geofence</small></article>
             </div>
-            <TwoColumn>
-              <Panel title="Recent stores">
-                {summary?.recentMerchants?.length ? (
-                  <SimpleList
-                    rows={summary.recentMerchants.map((merchant) => ({
-                      label: merchant.store_name,
-                      value: formatDateTime(merchant.created_at),
-                    }))}
-                  />
-                ) : (
-                  <EmptyState>No stores yet.</EmptyState>
-                )}
-              </Panel>
-              <Panel title="Recent master products">
-                {summary?.recentGlobalProducts?.length ? (
-                  <SimpleList
-                    rows={summary.recentGlobalProducts.map((product) => ({
-                      label: product.name,
-                      value: product.barcode,
-                    }))}
-                  />
-                ) : (
-                  <EmptyState>No master products yet.</EmptyState>
-                )}
-              </Panel>
-              <Panel title="Admin audit">
-                {summary?.recentAudit?.length ? (
-                  <SimpleList
-                    rows={summary.recentAudit.map((entry) => ({
-                      label: entry.action.replaceAll('_', ' '),
-                      value: formatDateTime(entry.created_at),
-                    }))}
-                  />
-                ) : (
-                  <EmptyState>No admin actions yet.</EmptyState>
-                )}
-              </Panel>
-            </TwoColumn>
-          </>
+
+            <div className="control-priority-grid">
+              <section className="control-chart-card"><header><div><span>Network performance</span><h2>Revenue · last 14 days</h2></div><button type="button" onClick={() => changeTab('orders')}>View ledger</button></header>
+                <div className="revenue-chart" aria-label="Fourteen day revenue chart">{(summary?.dailyTrend || []).map((day, index) => <div className="revenue-bar" key={day.date}><span style={{ height: `${Math.max(4, (Number(day.revenue || 0) / maxTrendRevenue) * 100)}%` }}><i>{formatMoney(day.revenue)}</i></span>{index % 2 === 0 || index === 13 ? <small>{day.label}</small> : <small />}</div>)}</div>
+              </section>
+
+              <section className="action-queue-card"><header><div><span>Action queue</span><h2>{pendingStores.length} store{pendingStores.length === 1 ? '' : 's'} need review</h2></div><b>{pendingStores.length}</b></header>
+                {pendingStores.length ? <div className="approval-queue">{pendingStores.slice(0, 4).map((store) => <article key={store.id}><div className="store-avatar">{store.store_name?.charAt(0)}</div><div><strong>{store.store_name}</strong><small>{store.branch_name} · {store.geofence_radius_meters || 150} m zone</small></div><button type="button" onClick={() => changeTab('merchants')}>Review</button></article>)}</div> : <div className="queue-clear"><span>✓</span><strong>Queue clear</strong><small>No onboarding decisions are waiting.</small></div>}
+                <button className="queue-footer" type="button" onClick={() => changeTab('merchants')}>Open store approvals →</button>
+              </section>
+            </div>
+
+            <div className="control-detail-grid">
+              <section className="network-health-card"><header><div><span>Platform health</span><h2>Operational signals</h2></div><span className={summary?.receiptFailureCount ? 'health-warning' : 'health-good'}>{summary?.receiptFailureCount ? 'Attention' : 'Healthy'}</span></header><div className="health-list"><div><span>Receipt delivery</span><strong>{summary?.receiptFailureCount || 0} failed</strong></div><div><span>Shopper rating</span><strong>{Number(summary?.averageRating || 0).toFixed(1)} / 5</strong></div><div><span>Feedback · 14 days</span><strong>{summary?.feedbackCount || 0}</strong></div><div><span>New shopper interest</span><strong>{summary?.interestCount || 0}</strong></div></div></section>
+
+              <section className="top-stores-card"><header><div><span>Store performance</span><h2>Network leaders</h2></div><button type="button" onClick={() => changeTab('merchants')}>All stores</button></header>{summary?.storePerformance?.length ? <div className="store-ranking">{summary.storePerformance.map((store, index) => <article key={store.id}><b>{String(index + 1).padStart(2, '0')}</b><div><strong>{store.store_name}</strong><small>{store.paid_orders} paid orders</small></div><span>{formatMoney(store.revenue)}</span></article>)}</div> : <EmptyState>No store performance yet.</EmptyState>}</section>
+
+              <section className="activity-card"><header><div><span>Live activity</span><h2>Latest network events</h2></div><button type="button" onClick={() => changeTab('system')}>Event log</button></header>{summary?.recentEvents?.length ? <div className="activity-list">{summary.recentEvents.map((event) => <article key={event.id}><i className={event.severity} /><div><strong>{event.message}</strong><small>{event.merchant_profile?.store_name || 'Platform'} · {formatDateTime(event.created_at)}</small></div></article>)}</div> : <EmptyState>No platform events yet.</EmptyState>}</section>
+            </div>
+          </section>
         ) : null}
 
         {activeTab === 'products' ? (
@@ -1027,6 +1087,10 @@ function PlatformAdminDashboard({ admin, session }) {
 
         {activeTab === 'merchants' ? (
           <section className="admin-grid admin-store-grid">
+            <section className="geofence-review-board">
+              <header><div><p className="eyebrow">Onboarding queue</p><h2>Geofence requests</h2><p>Confirm the submitted shopping zone before activating a store.</p></div><StatusPill tone={pendingStores.length ? 'warning' : 'success'}>{pendingStores.length} waiting</StatusPill></header>
+              {pendingStores.length ? <div className="geofence-request-list">{pendingStores.map((merchant) => <article key={merchant.id}><div className="store-avatar">{merchant.store_name?.charAt(0)}</div><div className="geofence-request-copy"><strong>{merchant.store_name}</strong><span>{merchant.branch_name} · {merchant.owner_email}</span><small>Submitted {formatDateTime(merchant.onboarding_submitted_at || merchant.created_at)}</small></div><div className="geofence-request-facts"><span>Radius<strong>{merchant.geofence_radius_meters || 150} m</strong></span><span>Coordinates<strong>{Number(merchant.geofence_latitude).toFixed(5)}, {Number(merchant.geofence_longitude).toFixed(5)}</strong></span></div><div className="geofence-request-actions"><a href={`https://www.google.com/maps?q=${merchant.geofence_latitude},${merchant.geofence_longitude}`} target="_blank" rel="noreferrer">Inspect map</a><button type="button" onClick={() => reviewStore(merchant, 'rejected')}>Request changes</button><button className="approve" type="button" onClick={() => reviewStore(merchant, 'approved')}>Approve store</button></div></article>)}</div> : <div className="queue-clear"><span>✓</span><strong>All geofence requests reviewed</strong><small>New submissions will appear here automatically.</small></div>}
+            </section>
             <section className="panel">
               <h2>Stores on Glide</h2>
               {merchants.length ? (
@@ -1036,6 +1100,7 @@ function PlatformAdminDashboard({ admin, session }) {
                       <tr>
                         <th>Store</th>
                         <th>Owner</th>
+                        <th>Onboarding</th>
                         <th>Products</th>
                         <th>Staff</th>
                         <th>Paid revenue</th>
@@ -1052,6 +1117,7 @@ function PlatformAdminDashboard({ admin, session }) {
                             </div>
                           </td>
                           <td>{merchant.owner_email}</td>
+                          <td><StatusPill tone={merchant.onboarding_status === 'approved' ? 'success' : merchant.onboarding_status === 'pending' ? 'warning' : 'neutral'}>{merchant.onboarding_status || 'approved'}</StatusPill><small>{merchant.geofence_enabled ? `${merchant.geofence_radius_meters} m zone` : 'No geofence'}</small></td>
                           <td>{merchant.products_count}</td>
                           <td>{merchant.active_staff_count}/{merchant.staff_count}</td>
                           <td>{formatMoney(merchant.paid_revenue)}</td>
@@ -1059,6 +1125,8 @@ function PlatformAdminDashboard({ admin, session }) {
                             <button type="button" onClick={() => openMerchantEdit(merchant)}>
                               Edit
                             </button>
+                            {merchant.onboarding_status === 'pending' ? <><button type="button" onClick={() => reviewStore(merchant, 'approved')}>Approve</button><button type="button" onClick={() => reviewStore(merchant, 'rejected')}>Request changes</button></> : null}
+                            {merchant.onboarding_status === 'approved' ? <button type="button" onClick={() => reviewStore(merchant, 'suspended')}>Suspend</button> : null}
                           </td>
                         </tr>
                       ))}
@@ -1103,6 +1171,23 @@ function PlatformAdminDashboard({ admin, session }) {
                 <EmptyState>Choose a store to update its public profile.</EmptyState>
               )}
             </form>
+          </section>
+        ) : null}
+
+        {activeTab === 'customers' ? (
+          <section className="admin-insight-grid">
+            <section className="panel"><div className="modal-title-row"><h2>Shopper feedback</h2><StatusPill>{customerInsights.feedback.length}</StatusPill></div>
+              {customerInsights.feedback.length ? <div className="insight-feed">{customerInsights.feedback.map((entry) => <article key={entry.id}><header><strong>{entry.merchant_profile?.store_name || 'Unknown store'}</strong><span>{'★'.repeat(entry.rating)}{'☆'.repeat(5 - entry.rating)}</span></header><small>{entry.orders?.order_number} · {formatDateTime(entry.created_at)}</small><p>{entry.comment || entry.tags?.join(' · ') || 'Rating only'}</p></article>)}</div> : <EmptyState>No shopper feedback yet.</EmptyState>}
+            </section>
+            <section className="panel"><div className="modal-title-row"><h2>User interest</h2><StatusPill>{customerInsights.interest.length}</StatusPill></div>
+              {customerInsights.interest.length ? <div className="table-wrap compact-table"><table><thead><tr><th>Shopper</th><th>Store</th><th>Offers</th><th>Joined</th></tr></thead><tbody>{customerInsights.interest.map((entry) => <tr key={entry.id}><td><strong>{entry.full_name || 'Shopper'}</strong><small>{entry.email}</small></td><td>{entry.merchant_profile?.store_name || 'Unknown store'}</td><td>{entry.offers ? 'Yes' : 'No'}</td><td>{formatDateTime(entry.created_at)}</td></tr>)}</tbody></table></div> : <EmptyState>No early-access interest yet.</EmptyState>}
+            </section>
+          </section>
+        ) : null}
+
+        {activeTab === 'system' ? (
+          <section className="panel"><div className="modal-title-row"><h2>System events</h2><button type="button" onClick={loadSystemLogs}>Refresh</button></div>
+            {systemLogs.length ? <div className="event-stream">{systemLogs.map((entry) => <article className={entry.severity} key={entry.id}><span>{entry.event_type.replaceAll('_', ' ')}</span><div><strong>{entry.message}</strong><small>{entry.merchant_profile?.store_name || 'Platform'} · {formatDateTime(entry.created_at)}</small></div></article>)}</div> : <EmptyState>No system events yet.</EmptyState>}
           </section>
         ) : null}
 
@@ -1179,6 +1264,7 @@ function PlatformAdminDashboard({ admin, session }) {
                       <th>Store</th>
                       <th>Status</th>
                       <th>Payment</th>
+                      <th>Receipt delivery</th>
                       <th>Total</th>
                       <th>Created</th>
                     </tr>
@@ -1190,6 +1276,7 @@ function PlatformAdminDashboard({ admin, session }) {
                         <td>{order.merchant_profile?.store_name || 'Unknown store'}</td>
                         <td>{order.status}</td>
                         <td>{order.payment_status}</td>
+                        <td><StatusPill tone={order.receipt_delivery_status === 'sent' ? 'success' : order.receipt_delivery_status === 'failed' ? 'warning' : 'neutral'}>{order.receipt_delivery_status || 'not requested'}</StatusPill><small>{order.customer_email || ''}</small></td>
                         <td>{formatMoney(order.total_amount)}</td>
                         <td>{formatDateTime(order.created_at)}</td>
                       </tr>
@@ -1202,6 +1289,10 @@ function PlatformAdminDashboard({ admin, session }) {
             )}
           </section>
         ) : null}
+
+        {activeTab === 'reconciliation' ? <section className="panel"><div className="modal-title-row"><h2>Payments requiring attention</h2><button type="button" onClick={loadOrders}>Refresh</button></div>{loading ? <LoadingRows /> : <div className="table-wrap"><table><thead><tr><th>Order</th><th>Store</th><th>Order state</th><th>Gateway state</th><th>Reference</th><th>Amount</th><th>Age</th></tr></thead><tbody>{orders.filter((order) => order.payment_status !== 'paid' || !order.payments?.some((payment) => payment.status === 'paid')).map((order) => { const payment = order.payments?.[0]; return <tr key={order.id}><td>{order.order_number}</td><td>{order.merchant_profile?.store_name || 'Unknown'}</td><td><StatusPill tone={order.payment_status === 'failed' ? 'warning' : 'neutral'}>{order.payment_status}</StatusPill></td><td>{payment?.status || 'No gateway record'}</td><td>{payment?.provider_reference || '—'}</td><td>{formatMoney(order.total_amount)}</td><td>{formatDateTime(order.created_at)}</td></tr> })}</tbody></table></div>}</section> : null}
+
+        {activeTab === 'mismatches' ? <section className="panel"><div className="modal-title-row"><h2>Basket mismatch report</h2><button type="button" onClick={loadOrders}>Refresh</button></div>{loading ? <LoadingRows /> : <div className="table-wrap"><table><thead><tr><th>Order</th><th>Store</th><th>Reasons</th><th>Incident note</th><th>Balance recovered</th><th>Recorded</th></tr></thead><tbody>{orders.filter((order) => order.verification_outcome === 'mismatch').map((order) => { const record = order.verification_records?.[0]; return <tr key={order.id}><td>{order.order_number}</td><td>{order.merchant_profile?.store_name || 'Unknown'}</td><td>{record?.reason_codes?.map((reason) => reason.replaceAll('_', ' ')).join(', ') || 'Mismatch'}</td><td>{record?.incident_note || '—'}</td><td>{formatMoney(record?.balance_collected || 0)}<small>{record?.balance_payment_method || ''}</small></td><td>{formatDateTime(record?.created_at || order.exited_at)}</td></tr> })}</tbody></table></div>}</section> : null}
 
         {activeTab === 'audit' ? (
           <section className="panel">
@@ -1252,7 +1343,7 @@ function MerchantDashboardRoute({ path, session }) {
     async function loadProfile() {
       const { data, error } = await supabase
         .from('merchant_profile')
-        .select('id,store_name,branch_name')
+        .select('id,store_name,branch_name,onboarding_status,onboarding_review_note')
         .eq('user_id', session.user.id)
         .maybeSingle()
 
@@ -1286,6 +1377,9 @@ function MerchantDashboardRoute({ path, session }) {
 
   if (state.loading) return <AppShell session={session} main={<LoadingRows />} />
   if (state.error) return <AppShell session={session} main={<Notice tone="error">{state.error}</Notice>} />
+  if (state.profile?.onboarding_status !== 'approved') {
+    return <OnboardingReview session={session} profile={state.profile} />
+  }
 
   const shell = (main) => <AppShell session={session} profile={state.profile} main={main} />
   if (path === '/dash') return shell(<Dashboard />)
@@ -1294,11 +1388,37 @@ function MerchantDashboardRoute({ path, session }) {
   if (path === '/dash/smart-add') return shell(<SmartAddDashboard />)
   if (path === '/dash/import') return shell(<CsvImport />)
   if (path === '/dash/qr') return shell(<QrPage />)
+  if (path === '/dash/location') return shell(<LocationSettings />)
   if (path === '/dash/orders') return shell(<Orders />)
   if (path === '/dash/payments') return shell(<Payments />)
   if (path === '/dash/staff') return shell(<StaffManagement />)
+  if (path === '/dash/reports') return shell(<StoreReports />)
+  if (path === '/dash/verification') return shell(<VerificationSettings />)
 
   return <NotFound />
+}
+
+function OnboardingReview({ session, profile }) {
+  async function logout() {
+    await supabase.auth.signOut()
+    navigate('/login')
+  }
+
+  const rejected = profile.onboarding_status === 'rejected'
+  return (
+    <main className="onboarding-review-page">
+      <section className="onboarding-review-card">
+        <Link className="brand" href="/">Glide</Link>
+        <div className={`review-orbit ${rejected ? 'rejected' : ''}`}><span>{rejected ? '!' : '✓'}</span></div>
+        <p className="eyebrow">Store access review</p>
+        <h1>{rejected ? 'Your setup needs attention.' : 'Your store is in the Glide queue.'}</h1>
+        <p>{rejected ? profile.onboarding_review_note || 'Review your store details and contact Glide support.' : `We are reviewing ${profile.store_name} and its verified shopping zone. Your checkout QR will activate after approval.`}</p>
+        <div className="onboarding-timeline"><span className="done">Account created</span><span className="done">Location secured</span><span className={rejected ? 'issue' : 'active'}>{rejected ? 'Changes requested' : 'Glide review'}</span><span>Store live</span></div>
+        <small>Signed in as {session.user.email}</small>
+        <button type="button" onClick={logout}>Sign out</button>
+      </section>
+    </main>
+  )
 }
 
 function Login() {
@@ -1532,6 +1652,8 @@ function Signup() {
 function StoreSetup({ session }) {
   const [storeName, setStoreName] = useState('')
   const [branchName, setBranchName] = useState('Main branch')
+  const [location, setLocation] = useState(null)
+  const [radius, setRadius] = useState(150)
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -1551,6 +1673,10 @@ function StoreSetup({ session }) {
 
   async function submit(event) {
     event.preventDefault()
+    if (!location) {
+      setMessage('Capture your store location before submitting for review.')
+      return
+    }
     setBusy(true)
     setMessage('')
 
@@ -1560,6 +1686,12 @@ function StoreSetup({ session }) {
         user_id: session.user.id,
         store_name: storeName.trim(),
         branch_name: branchName.trim() || 'Main branch',
+        geofence_latitude: location.latitude,
+        geofence_longitude: location.longitude,
+        geofence_radius_meters: Math.min(5000, Math.max(25, Number(radius) || 150)),
+        geofence_enabled: true,
+        onboarding_status: 'pending',
+        onboarding_submitted_at: new Date().toISOString(),
       })
       .select('id')
       .single()
@@ -1574,7 +1706,7 @@ function StoreSetup({ session }) {
     const qrResult = await supabase.from('qr_codes').insert({
       merchant_id: profileResult.data.id,
       qr_code: qrCode,
-      is_active: true,
+      is_active: false,
     })
 
     setBusy(false)
@@ -1587,17 +1719,37 @@ function StoreSetup({ session }) {
     navigate('/dash')
   }
 
+  function captureStoreLocation() {
+    if (!navigator.geolocation) {
+      setMessage('This device does not support location services.')
+      return
+    }
+    setBusy(true)
+    setMessage('Confirming your store location…')
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        setLocation({ latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy })
+        setMessage(`Location confirmed with ±${Math.round(coords.accuracy)} m accuracy.`)
+        setBusy(false)
+      },
+      () => {
+        setMessage('We could not confirm the store location. Enable precise location and try again from the store.')
+        setBusy(false)
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
+    )
+  }
+
   return (
     <main className="auth-page">
       <form className="auth-panel setup-panel" onSubmit={submit}>
         <Link className="brand" href="/">
           Glide
         </Link>
-        <p className="eyebrow">Store setup</p>
-        <h1>Create your store</h1>
+        <p className="eyebrow">Glide store onboarding</p>
+        <h1>Bring your store into Glide.</h1>
         <p>
-          This creates one merchant profile, one branch and the first active
-          checkout QR for your pilot.
+          Tell us where you operate, set your verified shopping area, then submit for a short Glide review.
         </p>
         {message ? <Notice tone="error">{message}</Notice> : null}
         <label>
@@ -1617,8 +1769,16 @@ function StoreSetup({ session }) {
             onChange={(event) => setBranchName(event.target.value)}
           />
         </label>
+        <section className="onboarding-geofence">
+          <div><span>02</span><div><strong>Verify the shopping zone</strong><small>Capture this while physically inside the store.</small></div></div>
+          <button className="secondary-action" disabled={busy} type="button" onClick={captureStoreLocation}>
+            {location ? 'Recapture store location' : 'Capture store location'}
+          </button>
+          {location ? <p className="location-proof">✓ Location secured · ±{Math.round(location.accuracy)} m</p> : null}
+          <label>Shopping radius (metres)<input min="25" max="5000" type="number" value={radius} onChange={(event) => setRadius(event.target.value)} /></label>
+        </section>
         <button disabled={busy || !storeName.trim()} type="submit">
-          {busy ? 'Creating store...' : 'Create store'}
+          {busy ? 'Submitting...' : 'Submit store for approval'}
         </button>
       </form>
     </main>
@@ -1634,7 +1794,10 @@ function AppShell({ session, profile, main }) {
     { href: '/dash/products', label: 'Inventory', icon: 'box' },
     { href: '/dash/stock', label: 'Smart Stock', icon: 'stock' },
     { href: '/dash/qr', label: 'Store QR', icon: 'qr' },
+    { href: '/dash/location', label: 'Geofence', icon: 'location' },
     { href: '/dash/staff', label: 'Team', icon: 'team' },
+    { href: '/dash/reports', label: 'Reports', icon: 'receipt' },
+    { href: '/dash/verification', label: 'Verification', icon: 'payment' },
     { href: '/cashier', label: 'Cashier', icon: 'terminal' },
   ]
 
@@ -3120,6 +3283,7 @@ function Products() {
 
 function StaffManagement() {
   const [staff, setStaff] = useState([])
+  const [storeTerminal, setStoreTerminal] = useState(null)
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [form, setForm] = useState({ fullName: '', email: '', password: '', role: 'cashier' })
@@ -3127,10 +3291,11 @@ function StaffManagement() {
 
   const loadStaff = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true)
-    const { data, error } = await supabase
-      .from('staff_members')
-      .select('*')
-      .order('created_at', { ascending: false })
+    const [staffResult, profileResult] = await Promise.all([
+      supabase.from('staff_members').select('*').order('created_at', { ascending: false }),
+      supabase.from('merchant_profile').select('store_name,branch_name,terminal_auth_code').maybeSingle(),
+    ])
+    const { data, error } = staffResult
 
     if (showLoading) setLoading(false)
     if (error) {
@@ -3139,6 +3304,7 @@ function StaffManagement() {
     }
 
     setStaff(data || [])
+    setStoreTerminal(profileResult.data || null)
     setLoading(false)
   }, [])
 
@@ -3191,7 +3357,8 @@ function StaffManagement() {
   return (
     <section className="dash-section">
       <PageTitle title="Staff" subtitle="Add cashier and security accounts for checkout operations." />
-      <Notice tone="warning">Each staff member uses their email, password, store name and terminal authentication code at login.</Notice>
+      <Notice tone="warning">After signing in, each staff member unlocks the terminal with their own authentication code. The signed-in account determines the store automatically.</Notice>
+      {storeTerminal ? <section className="store-terminal-code"><div><span>Store-owner terminal code</span><strong>{storeTerminal.terminal_auth_code || 'Not provisioned'}</strong><small>{storeTerminal.store_name} · {storeTerminal.branch_name}</small></div><p>Use this code only when the store owner account opens a cashier terminal. Staff must use their individual code shown below.</p></section> : null}
       {message ? <Notice tone={message.includes('created') ? 'success' : 'warning'}>{message}</Notice> : null}
       <form className="product-form" onSubmit={submit}>
         <h2>Add staff</h2>
@@ -3437,7 +3604,7 @@ function ProductForm({ product, onDone, onCancel }) {
 
     const payload = {
       name: form.name.trim(),
-      barcode: form.barcode.trim(),
+      barcode: form.barcode.trim() || `PLU-${Date.now().toString(36).toUpperCase()}`,
       sku: form.sku.trim() || null,
       category: form.category.trim() || null,
       price: Number(form.price),
@@ -3446,6 +3613,9 @@ function ProductForm({ product, onDone, onCancel }) {
       is_available: Boolean(form.is_available),
       track_inventory: Boolean(form.track_inventory),
       size: form.size?.trim() || null,
+      entry_mode: form.entry_mode || 'barcode',
+      is_restricted: Boolean(form.is_restricted),
+      requires_quantity_entry: Boolean(form.requires_quantity_entry),
       ...(form.global_product_id ? { global_product_id: form.global_product_id } : {}),
     }
 
@@ -3488,13 +3658,19 @@ function ProductForm({ product, onDone, onCancel }) {
           <input required value={form.name} onChange={(event) => update('name', event.target.value)} />
         </label>
         <label>
-          Barcode
+          Entry type
+          <select value={form.entry_mode || 'barcode'} onChange={(event) => update('entry_mode', event.target.value)}><option value="barcode">Scannable barcode</option><option value="plu">PLU / loose item</option><option value="weighed">Priced by entered quantity</option></select>
+        </label>
+        <label>
+          {form.entry_mode === 'barcode' ? 'Barcode' : 'PLU code (optional)'}
           <input
-            required
+            required={form.entry_mode === 'barcode'}
             value={form.barcode}
             onChange={(event) => update('barcode', event.target.value)}
           />
         </label>
+        <label className="check-field"><input type="checkbox" checked={Boolean(form.requires_quantity_entry)} onChange={(event) => update('requires_quantity_entry', event.target.checked)} /><span>Ask shopper/cashier for quantity</span></label>
+        <label className="check-field"><input type="checkbox" checked={Boolean(form.is_restricted)} onChange={(event) => update('is_restricted', event.target.checked)} /><span>Restricted item — cashier assistance required</span></label>
         <label>
           SKU
           <input value={form.sku || ''} onChange={(event) => update('sku', event.target.value)} />
@@ -3928,7 +4104,6 @@ function CashierPage({ session }) {
     try {
       const result = await callFunction('cashier-terminal', {
         action: 'validate-terminal',
-        storeName: gateway.storeName,
         authCode: gateway.authCode,
         station: 'cashier',
       })
@@ -4104,21 +4279,13 @@ function CashierPage({ session }) {
           </Link>
           <p className="eyebrow">Secure terminal</p>
           <h1>Unlock store access</h1>
-          <p>Sign-in is complete. Enter the assigned store name and active authentication code for this branch.</p>
+          <p>Sign-in is complete. Enter the terminal code assigned to this account.</p>
           {message ? <Notice tone="warning">{message}</Notice> : null}
-          <label>
-            Store Name
-            <input
-              required
-              autoFocus
-              value={gateway.storeName}
-              onChange={(event) => updateGateway('storeName', event.target.value)}
-            />
-          </label>
           <label>
             Authentication Code
             <input
               required
+              autoFocus
               autoCapitalize="characters"
               value={gateway.authCode}
               onChange={(event) => updateGateway('authCode', event.target.value.toUpperCase())}
@@ -4335,6 +4502,7 @@ function CustomerCheckout({ qrCode }) {
   const [showHelp, setShowHelp] = useState(false)
   const [activeTab, setActiveTab] = useState('scan')
   const [barcode, setBarcode] = useState('')
+  const [customerEmail, setCustomerEmail] = useState('')
   const [cart, setCart] = useState([])
   const [message, setMessage] = useState('')
   const [networkWarning, setNetworkWarning] = useState('')
@@ -4343,6 +4511,11 @@ function CustomerCheckout({ qrCode }) {
   const [addToast, setAddToast] = useState(null)
   const [scanResult, setScanResult] = useState(null)
   const [pendingScan, setPendingScan] = useState(null)
+  const [confirmDialog, setConfirmDialog] = useState(null)
+  const [shopperLocation, setShopperLocation] = useState(null)
+  const [geofenceState, setGeofenceState] = useState('checking')
+  const [pendingPayment, setPendingPayment] = useState(() => readJsonStorage(`glide:pending-payment:${qrCode}`, null))
+  const [paymentRecoveryState, setPaymentRecoveryState] = useState('idle')
   const [spendLimit, setSpendLimit] = useState(() => Number(localStorage.getItem(`glide:spend-limit:${qrCode}`)) || 0)
   const videoRef = useRef(null)
   const toastTimerRef = useRef(null)
@@ -4360,11 +4533,14 @@ function CustomerCheckout({ qrCode }) {
   const latestVisibleBarcodeRef = useRef({ code: '', time: 0 })
   const pendingScanRef = useRef(null)
   const autoCameraTriedRef = useRef(false)
+  const confirmResolveRef = useRef(null)
+  const recoveryAttemptedRef = useRef(false)
   const sessionStorageKey = `glide:checkout:${qrCode}:session`
   const cartStorageKey = `glide:checkout:${qrCode}:cart`
   const activityStorageKey = `glide:checkout:${qrCode}:lastActivity`
   const networkWarningKey = `glide:checkout:${qrCode}:networkWarningShown`
   const spendLimitKey = `glide:spend-limit:${qrCode}`
+  const pendingPaymentKey = `glide:pending-payment:${qrCode}`
 
   useEffect(() => {
     if (spendLimit > 0) localStorage.setItem(spendLimitKey, String(spendLimit))
@@ -4407,7 +4583,7 @@ function CustomerCheckout({ qrCode }) {
     async function loadStore() {
       const { data, error } = await supabase
         .from('qr_codes')
-        .select('id,merchant_id,qr_code,is_active,merchant_profile(store_name)')
+        .select('id,merchant_id,qr_code,is_active,merchant_profile(store_name,geofence_enabled,geofence_latitude,geofence_longitude,geofence_radius_meters)')
         .eq('qr_code', qrCode)
         .maybeSingle()
 
@@ -4433,6 +4609,51 @@ function CustomerCheckout({ qrCode }) {
     }, 2000)
 
     return () => window.clearTimeout(splashTimer)
+  }, [store])
+
+  useEffect(() => {
+    if (!store || !pendingPayment?.receiptToken || recoveryAttemptedRef.current) return
+    recoveryAttemptedRef.current = true
+    recoverPendingPayment(true)
+    // The recovery is deliberately attempted once when this store checkout reloads.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [store, pendingPayment?.receiptToken])
+
+  useEffect(() => {
+    if (!store || !shopperSessionId || pendingPayment?.receiptToken || recoveryAttemptedRef.current) return
+    recoveryAttemptedRef.current = true
+    recoverSessionPayment(shopperSessionId)
+    // This one-time lookup recovers payments created before browser recovery data existed.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [store, shopperSessionId, pendingPayment?.receiptToken])
+
+  useEffect(() => {
+    if (!store) return undefined
+    if (!store.merchant_profile?.geofence_enabled) {
+      setGeofenceState('inside')
+      return undefined
+    }
+
+    if (!navigator.geolocation) {
+      setGeofenceState('blocked')
+      return undefined
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
+      ({ coords }) => {
+        const location = { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy }
+        const distance = distanceInMeters(
+          { latitude: Number(store.merchant_profile.geofence_latitude), longitude: Number(store.merchant_profile.geofence_longitude) },
+          location,
+        )
+        setShopperLocation(location)
+        setGeofenceState(distance - Math.min(coords.accuracy || 0, 100) <= Number(store.merchant_profile.geofence_radius_meters || 150) ? 'inside' : 'outside')
+      },
+      () => setGeofenceState('blocked'),
+      { enableHighAccuracy: true, maximumAge: 15000, timeout: 15000 },
+    )
+
+    return () => navigator.geolocation.clearWatch(watchId)
   }, [store])
 
   useEffect(
@@ -4951,18 +5172,112 @@ function CustomerCheckout({ qrCode }) {
     if (reason === 'manual') window.close()
   }
 
+  function requestConfirmation(options) {
+    setConfirmDialog(options)
+    return new Promise((resolve) => {
+      confirmResolveRef.current = resolve
+    })
+  }
+
+  function closeConfirmation(result) {
+    confirmResolveRef.current?.(result)
+    confirmResolveRef.current = null
+    setConfirmDialog(null)
+  }
+
+  async function confirmEndSession() {
+    if (pendingPayment?.receiptToken) {
+      setMessage('A payment is still being reconciled. Check its status before ending this session so you do not lose the receipt.')
+      await recoverPendingPayment()
+      return
+    }
+    const hasUnpaidCart = cartRef.current.length > 0
+    const confirmed = await requestConfirmation({
+      title: hasUnpaidCart ? 'End without paying?' : 'End this session?',
+      message: hasUnpaidCart
+        ? `Your ${cartRef.current.length} unpaid cart item${cartRef.current.length === 1 ? '' : 's'} will be removed and cannot be recovered.`
+        : 'Your shopping session and local data will be cleared.',
+      confirmLabel: hasUnpaidCart ? 'End without paying' : 'End session',
+    })
+    if (confirmed) endSession('manual')
+  }
+
   function openHelp() {
     noteActivity()
     setShowHelp(true)
   }
 
+  async function recoverPendingPayment(automatic = false) {
+    if (!pendingPayment?.receiptToken || paymentRecoveryState === 'checking') return
+    setPaymentRecoveryState('checking')
+    if (!automatic) setMessage('Checking Paystack for your completed payment…')
+
+    try {
+      const result = await callFunction('verify-payment', {
+        receiptToken: pendingPayment.receiptToken,
+        reference: pendingPayment.reference,
+      }, false)
+
+      if (result.order?.payment_status === 'paid') {
+        localStorage.removeItem(pendingPaymentKey)
+        sessionStorage.removeItem(cartStorageKey)
+        setPendingPayment(null)
+        setCart([])
+        window.location.replace(`/receipt/${pendingPayment.receiptToken}`)
+        return
+      }
+
+      setPaymentRecoveryState('awaiting')
+      setMessage('Your payment is still pending. You can return to Paystack or check again shortly.')
+    } catch (error) {
+      if (String(error.message).toLowerCase().includes('expired')) {
+        localStorage.removeItem(pendingPaymentKey)
+        setPendingPayment(null)
+        setPaymentRecoveryState('expired')
+      } else {
+        setPaymentRecoveryState('awaiting')
+      }
+      if (!automatic || !String(error.message).toLowerCase().includes('not been confirmed')) {
+        setMessage(error.message)
+      }
+    }
+  }
+
+  async function recoverSessionPayment(sessionId) {
+    try {
+      const result = await callFunction('verify-payment', { shopperSessionId: sessionId }, false)
+      if (result.order?.payment_status !== 'paid' || !result.order?.receipt_token) return
+      sessionStorage.removeItem(cartStorageKey)
+      setCart([])
+      window.location.replace(`/receipt/${result.order.receipt_token}`)
+    } catch {
+      // No order or an unpaid attempt is normal when a shopper first opens the scanner.
+    }
+  }
+
   async function checkout() {
     noteActivity(true)
+    if (pendingPayment?.receiptToken) {
+      await recoverPendingPayment()
+      return
+    }
+    if (store?.merchant_profile?.geofence_enabled && geofenceState !== 'inside') {
+      setMessage(geofenceState === 'outside' ? 'You are outside this store’s shopping area.' : 'Enable precise location to checkout in this store.')
+      return
+    }
     if (spendLimit > 0 && total > spendLimit) {
-      const continueOverLimit = window.confirm(`Your cart is ${formatMoney(total - spendLimit)} above your spend limit. Continue to payment?`)
+      const continueOverLimit = await requestConfirmation({
+        title: 'You are over your spend limit',
+        message: `Your cart is ${formatMoney(total - spendLimit)} above your limit. Do you still want to continue to payment?`,
+        confirmLabel: 'Continue to payment',
+      })
       if (!continueOverLimit) return
     }
-    const confirmed = window.confirm('Have you confirmed everything in the cart is accurate?')
+    const confirmed = await requestConfirmation({
+      title: 'Ready to pay?',
+      message: 'Please confirm that every item and quantity in your cart is accurate.',
+      confirmLabel: 'Yes, start payment',
+    })
     if (!confirmed) return
 
     setBusy(true)
@@ -4973,6 +5288,8 @@ function CustomerCheckout({ qrCode }) {
         {
           qrCode,
           shopperSessionId,
+          location: shopperLocation,
+          customerEmail,
           cart: cart.map((item) => ({ productId: item.id, quantity: item.cartQuantity })),
         },
         false,
@@ -4981,6 +5298,17 @@ function CustomerCheckout({ qrCode }) {
       if (!result.authorizationUrl) {
         throw new Error('Payment could not start. The checkout server did not return a Paystack link.')
       }
+
+      const recoverablePayment = {
+        receiptToken: result.receiptToken,
+        reference: result.reference,
+        authorizationUrl: result.authorizationUrl,
+        createdAt: new Date().toISOString(),
+        total,
+        customerEmail,
+      }
+      localStorage.setItem(pendingPaymentKey, JSON.stringify(recoverablePayment))
+      setPendingPayment(recoverablePayment)
 
       window.location.href = result.authorizationUrl
     } catch (error) {
@@ -5023,6 +5351,7 @@ function CustomerCheckout({ qrCode }) {
 
   return (
     <main className="shop-page">
+      <ConfirmDialog dialog={confirmDialog} onCancel={() => closeConfirmation(false)} onConfirm={() => closeConfirmation(true)} />
       {showIntro ? (
         <div
           className="guide-backdrop"
@@ -5075,7 +5404,7 @@ function CustomerCheckout({ qrCode }) {
           <button
             className="end-session-button"
             type="button"
-            onClick={endSession}
+            onClick={confirmEndSession}
           >
             End
           </button>
@@ -5137,7 +5466,20 @@ function CustomerCheckout({ qrCode }) {
       </section>
 
       {networkWarning ? <Notice tone="warning">{networkWarning}</Notice> : null}
+      {store?.merchant_profile?.geofence_enabled && geofenceState !== 'inside' ? (
+        <Notice tone="warning">
+          {geofenceState === 'outside' ? 'Shopping is locked because you are outside the store area.' : geofenceState === 'blocked' ? 'Location access is required. Enable precise location to shop.' : 'Checking that you are inside the store…'}
+        </Notice>
+      ) : null}
       {message ? <Notice tone="warning">{message}</Notice> : null}
+
+      {pendingPayment ? (
+        <section className="payment-recovery-card" role="status">
+          <div className={`payment-recovery-icon ${paymentRecoveryState}`} aria-hidden="true">↻</div>
+          <div><span>Payment in progress</span><strong>{paymentRecoveryState === 'checking' ? 'Checking your payment…' : 'Your receipt is protected'}</strong><small>{formatMoney(pendingPayment.total || total)} · {pendingPayment.customerEmail || customerEmail}</small></div>
+          <div className="payment-recovery-actions"><button disabled={paymentRecoveryState === 'checking'} type="button" onClick={() => recoverPendingPayment()}>{paymentRecoveryState === 'checking' ? 'Checking…' : 'Check payment status'}</button>{pendingPayment.authorizationUrl ? <button type="button" onClick={() => { window.location.href = pendingPayment.authorizationUrl }}>Return to Paystack</button> : null}</div>
+        </section>
+      ) : null}
 
       {addToast ? (
         <div className="added-toast" role="status">
@@ -5295,11 +5637,12 @@ function CustomerCheckout({ qrCode }) {
                 </div>
               ))}
               <div className="cart-checkout-bar">
+                <label className="checkout-email">Receipt email<input required type="email" placeholder="you@example.com" value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} /></label>
                 <div className="cart-total">
                   <span>Total</span>
                   <strong>{formatMoney(total)}</strong>
                 </div>
-                <button disabled={!cart.length || busy} type="button" onClick={checkout}>
+                <button disabled={!cart.length || !customerEmail.trim() || busy || (store?.merchant_profile?.geofence_enabled && geofenceState !== 'inside')} type="button" onClick={checkout}>
                   {busy ? 'Starting payment...' : 'Checkout'}
                 </button>
               </div>
@@ -5317,6 +5660,83 @@ function CustomerCheckout({ qrCode }) {
   )
 }
 
+function LocationSettings() {
+  const [settings, setSettings] = useState({ latitude: '', longitude: '', radius: 150, enabled: false })
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    supabase
+      .from('merchant_profile')
+      .select('geofence_latitude,geofence_longitude,geofence_radius_meters,geofence_enabled')
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (error) setMessage(error.message)
+        if (data) setSettings({
+          latitude: data.geofence_latitude ?? '',
+          longitude: data.geofence_longitude ?? '',
+          radius: data.geofence_radius_meters || 150,
+          enabled: Boolean(data.geofence_enabled),
+        })
+      })
+  }, [])
+
+  function captureLocation() {
+    if (!navigator.geolocation) {
+      setMessage('This device does not support location services.')
+      return
+    }
+    setBusy(true)
+    setMessage('Finding the store location…')
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        setSettings((current) => ({ ...current, latitude: coords.latitude, longitude: coords.longitude }))
+        setMessage(`Store location captured with ±${Math.round(coords.accuracy)} m accuracy.`)
+        setBusy(false)
+      },
+      () => {
+        setMessage('Location could not be captured. Allow precise location and try again.')
+        setBusy(false)
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+    )
+  }
+
+  async function save(event) {
+    event.preventDefault()
+    const latitude = Number(settings.latitude)
+    const longitude = Number(settings.longitude)
+    if (settings.enabled && (!Number.isFinite(latitude) || !Number.isFinite(longitude))) {
+      setMessage('Capture the store location before enabling the geofence.')
+      return
+    }
+    setBusy(true)
+    const { error } = await supabase.from('merchant_profile').update({
+      geofence_latitude: Number.isFinite(latitude) ? latitude : null,
+      geofence_longitude: Number.isFinite(longitude) ? longitude : null,
+      geofence_radius_meters: Math.min(5000, Math.max(25, Number(settings.radius) || 150)),
+      geofence_enabled: settings.enabled,
+    }).select('id').single()
+    setBusy(false)
+    setMessage(error ? error.message : settings.enabled ? 'Geofence enabled. Shoppers must be inside this area.' : 'Geofence settings saved but enforcement is off.')
+  }
+
+  return (
+    <section className="dash-section geofence-settings">
+      <PageTitle title="Store geofence" subtitle="Only allow self-checkout while a shopper is physically inside your store area." />
+      <form className="settings-card" onSubmit={save}>
+        {message ? <Notice tone={message.includes('enabled') || message.includes('saved') || message.includes('captured') ? 'success' : 'warning'}>{message}</Notice> : null}
+        <div className="geofence-status"><span className={settings.enabled ? 'on' : ''} /><div><strong>{settings.enabled ? 'Enforcement on' : 'Enforcement off'}</strong><small>Checkout is checked again securely on the server.</small></div></div>
+        <button className="secondary-action" disabled={busy} type="button" onClick={captureLocation}>Use my current store location</button>
+        <div className="geofence-coordinates"><label>Latitude<input readOnly value={settings.latitude} /></label><label>Longitude<input readOnly value={settings.longitude} /></label></div>
+        <label>Allowed radius (metres)<input min="25" max="5000" type="number" value={settings.radius} onChange={(event) => setSettings((current) => ({ ...current, radius: event.target.value }))} /></label>
+        <label className="check-field"><input type="checkbox" checked={settings.enabled} onChange={(event) => setSettings((current) => ({ ...current, enabled: event.target.checked }))} /><span>Require shoppers to be inside this geofence</span></label>
+        <button disabled={busy} type="submit">{busy ? 'Saving…' : 'Save geofence'}</button>
+      </form>
+    </section>
+  )
+}
+
 function PaymentReturn({ receiptToken }) {
   const [state, setState] = useState({ loading: true, error: '' })
 
@@ -5324,6 +5744,19 @@ function PaymentReturn({ receiptToken }) {
     const reference = new URLSearchParams(window.location.search).get('reference')
     callFunction('verify-payment', { receiptToken, reference }, false)
       .then(() => {
+        Object.keys(localStorage)
+          .filter((key) => key.startsWith('glide:pending-payment:'))
+          .forEach((key) => {
+            try {
+              const pending = JSON.parse(localStorage.getItem(key) || '{}')
+              if (pending.receiptToken !== receiptToken) return
+              const storeCode = key.replace('glide:pending-payment:', '')
+              localStorage.removeItem(key)
+              sessionStorage.removeItem(`glide:checkout:${storeCode}:cart`)
+            } catch {
+              localStorage.removeItem(key)
+            }
+          })
         window.location.replace(`/receipt/${receiptToken}`)
       })
       .catch((error) => setState({ loading: false, error: error.message }))
@@ -5435,7 +5868,7 @@ function ShopperLanding({ receiptToken }) {
           </> : null}
         </form>
       </section>
-      <footer className="shopper-footer"><strong>Glide</strong><span>Scan. Pay. Go.</span></footer>
+      <footer className="shopper-footer"><strong>Glide</strong><span>Your store, without the checkout line.</span></footer>
     </main>
   )
 }
@@ -5511,11 +5944,18 @@ function ReceiptPage({ token }) {
   if (loading) return <main className="public-page narrow"><LoadingRows /></main>
   if (!order) return <main className="public-page narrow"><h1>Receipt not found.</h1></main>
 
+  const isVerified = order.status === 'exited'
+
   return (
-    <main className="receipt-page">
+    <main className={`receipt-page ${isVerified ? 'is-verified' : 'is-unverified'}`}>
       <section className="receipt-card">
         <p className="eyebrow">{order.merchant_profile?.store_name || 'Glide store'}</p>
-        <h1>Receipt {order.order_number}</h1>
+        <div className="receipt-heading">
+          <h1>Receipt {order.order_number}</h1>
+          <span className={`receipt-verification-badge ${isVerified ? 'verified' : 'pending'}`}>
+            {isVerified ? '✓ Verified' : 'Verification pending'}
+          </span>
+        </div>
         <div className="receipt-items-panel">
           <SimpleList
             rows={order.order_items.map((item) => ({
@@ -5541,20 +5981,22 @@ function ReceiptPage({ token }) {
           <strong>{order.exit_token}</strong>
         </div>
         <div className="receipt-actions">
-          <button type="button" onClick={() => window.print()}>
-            Download receipt
+          <button disabled={!isVerified} type="button" onClick={() => isVerified && window.print()}>
+            {isVerified ? 'Download receipt' : 'Download locked until verified'}
           </button>
-          <button className="receipt-exit-button" type="button" onClick={exitStore}>
-            Exit store
+          <button className="receipt-exit-button" disabled={!isVerified} type="button" onClick={exitStore}>
+            {isVerified ? 'Finish session' : 'Verify at payment station'}
           </button>
         </div>
-        <p className="receipt-exit-note">Show this receipt at the exit for verification.</p>
+        <p className="receipt-exit-note">{isVerified ? 'This receipt has been verified at the payment station.' : 'Show this receipt at the payment station. Download becomes available after verification.'}</p>
+        {!isVerified ? <p className="print-verification-warning">Receipt download is locked until station verification.</p> : null}
       </section>
     </main>
   )
 }
 
-function PaymentVerifier() {
+// oxlint-disable-next-line no-unused-vars -- retained temporarily for rollback during terminal rollout
+function PaymentVerifierLegacy() {
   const [code, setCode] = useState('')
   const [order, setOrder] = useState(null)
   const [message, setMessage] = useState('')
@@ -5660,11 +6102,131 @@ function PaymentVerifier() {
   )
 }
 
+function PaymentVerifier() {
+  const [code, setCode] = useState('')
+  const [order, setOrder] = useState(null)
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [checkedItems, setCheckedItems] = useState({})
+  const [mismatchMode, setMismatchMode] = useState(false)
+  const [reasonCodes, setReasonCodes] = useState([])
+  const [incidentNote, setIncidentNote] = useState('')
+  const [balanceCollected, setBalanceCollected] = useState('')
+  const [balancePaymentMethod, setBalancePaymentMethod] = useState('card')
+
+  const resetInspection = useCallback((nextOrder) => {
+    setCheckedItems(Object.fromEntries((nextOrder?.order_items || []).map((item) => [item.id, false])))
+    setMismatchMode(false)
+    setReasonCodes([])
+    setIncidentNote('')
+    setBalanceCollected('')
+  }, [])
+
+  const verifyCode = useCallback(async (receiptCode) => {
+    const query = receiptCode.trim()
+    if (!query) return
+    setMessage('')
+    setOrder(null)
+    setBusy(true)
+    try {
+      let result
+      try {
+        result = await callFunction('cashier-terminal', { action: 'verify-receipt', receiptCode: query, station: 'security' })
+      } catch {
+        result = await callFunction('cashier-terminal', { action: 'lookup-transaction', query, station: 'security' })
+      }
+      setOrder(result.order)
+      resetInspection(result.order)
+    } catch (error) {
+      setMessage(error.message || 'No transaction matched that code, reference or email.')
+    } finally {
+      setBusy(false)
+    }
+  }, [resetInspection])
+
+  async function verify(event) {
+    event.preventDefault()
+    await verifyCode(code)
+  }
+
+  useRealtimeRefresh('verify-receipt-live', ['orders'], () => {
+    if (code.trim()) verifyCode(code)
+  })
+
+  const items = order?.order_items || []
+  const itemCount = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+  const paid = order?.payment_status === 'paid'
+  const used = order?.status === 'exited'
+  const statusLabel = used ? 'Already verified' : paid ? 'Paid — inspect basket' : order?.payment_status === 'failed' ? 'Payment failed' : 'Payment pending'
+  const mismatchReasons = [['item_not_scanned', 'Item not scanned'], ['wrong_quantity', 'Wrong quantity'], ['wrong_item', 'Wrong item'], ['price_dispute', 'Price dispute']]
+
+  async function closeReceipt() {
+    if (!order || used) return
+    const inspected = Object.entries(checkedItems).filter(([, value]) => value).map(([itemId]) => itemId)
+    if (!paid) return setMessage('This transaction is not paid. Refresh after payment is confirmed.')
+    if (!mismatchMode && inspected.length !== items.length) return setMessage('Tick every item before confirming a matched basket.')
+    if (mismatchMode && !reasonCodes.length) return setMessage('Select at least one mismatch reason.')
+    setBusy(true)
+    setMessage('')
+    try {
+      const result = await callFunction('cashier-terminal', {
+        action: 'burn-receipt', receiptCode: order.exit_token, station: 'security',
+        outcome: mismatchMode ? 'mismatch' : 'matched', reasonCodes, checkedItems: inspected,
+        incidentNote, balanceCollected: Number(balanceCollected) || 0,
+        balancePaymentMethod: Number(balanceCollected) > 0 ? balancePaymentMethod : '',
+      })
+      setOrder(result.order)
+      setMessage(mismatchMode ? 'Mismatch recorded and receipt closed.' : 'Basket matched. Receipt verified and closed.')
+    } catch (error) {
+      setMessage(error.message || 'This receipt cannot be verified.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="dash-section payment-verifier">
+      <PageTitle title="Exit verification" subtitle="Scan a receipt, inspect every item, then record the outcome once." />
+      <div className="verification-guide">
+        <div><span>1</span><strong>Find transaction</strong><small>Receipt code, reference or email.</small></div>
+        <div><span>2</span><strong>Inspect basket</strong><small>Tick each physical item.</small></div>
+        <div><span>3</span><strong>Record outcome</strong><small>Match or documented mismatch.</small></div>
+      </div>
+      <form className="security-scanner" onSubmit={verify}>
+        <label>Transaction lookup<input autoFocus placeholder="Scan code, reference or shopper email" value={code} onChange={(event) => setCode(event.target.value)} /></label>
+        <button disabled={busy} type="submit">{busy ? 'Checking...' : 'Check transaction'}</button>
+      </form>
+      {message ? <Notice tone={message.includes('closed') || message.includes('matched') ? 'success' : 'warning'}>{message}</Notice> : null}
+      {order ? (
+        <section className={`security-manifest ${used ? 'used' : ''}`}>
+          <header className={`verification-status ${used ? 'used' : paid ? 'paid' : 'pending'}`}><div><span>{statusLabel}</span><h2>{order.order_number}</h2></div><strong>{itemCount} items</strong></header>
+          <SimpleList rows={[{ label: 'Payment', value: order.payment_status }, { label: 'Verification', value: used ? order.verification_outcome || 'closed' : 'open' }, { label: 'Total', value: formatMoney(order.total_amount) }]} />
+          <div className="audit-list verification-checklist">
+            {items.map((item) => (
+              <button className={`${Number(item.line_total) >= 10000 ? 'high-value' : ''} ${checkedItems[item.id] ? 'checked' : ''}`} disabled={!paid || used} key={item.id} type="button" onClick={() => setCheckedItems((current) => ({ ...current, [item.id]: !current[item.id] }))}>
+                <span><i>{checkedItems[item.id] ? '✓' : ''}</i>{item.product_name}</span><strong>{item.quantity} × {formatMoney(item.unit_price)}</strong>
+              </button>
+            ))}
+          </div>
+          {paid && !used ? (
+            <div className="verification-decision">
+              <div className="decision-toggle"><button className={!mismatchMode ? 'active' : ''} type="button" onClick={() => setMismatchMode(false)}>Basket matches</button><button className={mismatchMode ? 'active danger' : ''} type="button" onClick={() => setMismatchMode(true)}>Report mismatch</button></div>
+              {mismatchMode ? <div className="mismatch-form"><p>Select every issue found. The inspection is saved in the audit trail.</p><div className="reason-grid">{mismatchReasons.map(([value, label]) => <label key={value}><input type="checkbox" checked={reasonCodes.includes(value)} onChange={() => setReasonCodes((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])} /> {label}</label>)}</div><label>Incident note<textarea value={incidentNote} onChange={(event) => setIncidentNote(event.target.value)} placeholder="What happened and how was it resolved?" /></label><div className="form-grid two"><label>Balance collected<input min="0" step="0.01" type="number" value={balanceCollected} onChange={(event) => setBalanceCollected(event.target.value)} /></label><label>Method<select value={balancePaymentMethod} onChange={(event) => setBalancePaymentMethod(event.target.value)}><option value="card">Card</option><option value="transfer">Transfer</option><option value="cash">Cash</option><option value="none">Not collected</option></select></label></div></div> : null}
+              <button disabled={busy} type="button" onClick={closeReceipt}>{busy ? 'Saving...' : mismatchMode ? 'Record mismatch and close' : 'Confirm match and verify exit'}</button>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+    </section>
+  )
+}
+
 function ShopperTerminal({ session }) {
   const [terminal, setTerminal] = useState(() => readJsonStorage('glide:shopper-terminal', null))
   const [gateway, setGateway] = useState({ storeName: '', authCode: '' })
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
+  const [shiftSummary, setShiftSummary] = useState(null)
 
   useEffect(() => {
     if (terminal) writeJsonStorage('glide:shopper-terminal', terminal)
@@ -5685,7 +6247,6 @@ function ShopperTerminal({ session }) {
     try {
       const result = await callFunction('cashier-terminal', {
         action: 'validate-terminal',
-        storeName: gateway.storeName,
         authCode: gateway.authCode,
         station: 'security',
       })
@@ -5699,9 +6260,25 @@ function ShopperTerminal({ session }) {
     }
   }
 
+  async function endShift() {
+    setBusy(true)
+    setMessage('')
+    try {
+      const result = await callFunction('cashier-terminal', { action: 'end-shift', station: 'security' })
+      setShiftSummary(result.shift || { baskets_verified: 0, mismatches: 0, cash_collected: 0 })
+      localStorage.removeItem('glide:shopper-terminal')
+      setTerminal(null)
+    } catch (error) {
+      setMessage(error.message || 'Could not close this shift.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (!terminal) {
     return (
       <main className="cashier-page cashier-lock-page">
+        {shiftSummary ? <div className="shift-summary-card"><p className="eyebrow">Shift closed</p><h2>Handover summary</h2><SimpleList rows={[{ label: 'Baskets verified', value: shiftSummary.baskets_verified || 0 }, { label: 'Mismatches', value: shiftSummary.mismatches || 0 }, { label: 'Assisted sales', value: shiftSummary.assisted_sales || 0 }, { label: 'Cash collected', value: formatMoney(shiftSummary.cash_collected || 0) }]} /><button type="button" onClick={() => setShiftSummary(null)}>Open another shift</button></div> : null}
         <form className="cashier-lock-panel" onSubmit={validateGateway}>
           <Link className="brand" href="/">
             Glide
@@ -5710,12 +6287,8 @@ function ShopperTerminal({ session }) {
           <h1>Open payment verification</h1>
           {message ? <Notice tone="warning">{message}</Notice> : null}
           <label>
-            Store Name
-            <input required autoFocus value={gateway.storeName} onChange={(event) => setGateway((current) => ({ ...current, storeName: event.target.value }))} />
-          </label>
-          <label>
             Authentication Code
-            <input required autoCapitalize="characters" value={gateway.authCode} onChange={(event) => setGateway((current) => ({ ...current, authCode: event.target.value.toUpperCase() }))} />
+            <input required autoFocus autoCapitalize="characters" value={gateway.authCode} onChange={(event) => setGateway((current) => ({ ...current, authCode: event.target.value.toUpperCase() }))} />
           </label>
           <button disabled={busy} type="submit">
             {busy ? 'Checking terminal...' : 'Open terminal'}
@@ -5737,6 +6310,7 @@ function ShopperTerminal({ session }) {
           <small>{terminal.branchName || 'Main branch'} - {session.user.email}</small>
         </div>
         <div className="cashier-header-actions">
+          <button disabled={busy} type="button" onClick={endShift}>End shift</button>
           <button type="button" onClick={logout}>
             Sign out
           </button>
@@ -5797,9 +6371,66 @@ function Payments() {
   )
 }
 
+function VerificationSettings() {
+  const [settings, setSettings] = useState({ verification_mode: 'all', verification_threshold: 0, random_audit_percent: 10, mismatch_tolerance: 0, vat_percent: 0, receipt_footer: '', operating_hours: '' })
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(true)
+
+  useEffect(() => {
+    supabase.from('merchant_profile').select('verification_mode,verification_threshold,random_audit_percent,mismatch_tolerance,vat_percent,receipt_footer,operating_hours').maybeSingle().then(({ data, error }) => {
+      if (data) setSettings((current) => ({ ...current, ...data, operating_hours: typeof data.operating_hours === 'string' ? data.operating_hours : data.operating_hours?.note || '' }))
+      if (error) setMessage(error.message)
+      setBusy(false)
+    })
+  }, [])
+
+  async function save(event) {
+    event.preventDefault()
+    setBusy(true)
+    setMessage('')
+    const values = {
+      ...settings,
+      verification_threshold: Math.max(0, Number(settings.verification_threshold) || 0),
+      random_audit_percent: Math.min(100, Math.max(0, Number(settings.random_audit_percent) || 0)),
+      mismatch_tolerance: Math.max(0, Number(settings.mismatch_tolerance) || 0),
+      vat_percent: Math.min(100, Math.max(0, Number(settings.vat_percent) || 0)),
+      operating_hours: settings.operating_hours ? { note: settings.operating_hours } : {},
+    }
+    const { error } = await supabase.from('merchant_profile').update(values).select('id').single()
+    setMessage(error ? error.message : 'Verification and receipt policy saved.')
+    setBusy(false)
+  }
+
+  const field = (key, value) => setSettings((current) => ({ ...current, [key]: value }))
+  return <section className="dash-section"><PageTitle title="Verification policy" subtitle="Set the store rules used at the exit station and on customer receipts." /><form className="settings-card" onSubmit={save}>{message ? <Notice tone={message.includes('saved') ? 'success' : 'warning'}>{message}</Notice> : null}<label>Verification mode<select value={settings.verification_mode} onChange={(event) => field('verification_mode', event.target.value)}><option value="all">Verify every basket</option><option value="threshold_random">High-value plus random audit</option></select></label>{settings.verification_mode === 'threshold_random' ? <div className="form-grid two"><label>Always verify above<input min="0" step="100" type="number" value={settings.verification_threshold} onChange={(event) => field('verification_threshold', event.target.value)} /></label><label>Random audit percentage<input max="100" min="0" type="number" value={settings.random_audit_percent} onChange={(event) => field('random_audit_percent', event.target.value)} /></label></div> : null}<div className="form-grid two"><label>Allowed mismatch tolerance<input min="0" step="1" type="number" value={settings.mismatch_tolerance} onChange={(event) => field('mismatch_tolerance', event.target.value)} /></label><label>VAT percentage<input max="100" min="0" step="0.01" type="number" value={settings.vat_percent} onChange={(event) => field('vat_percent', event.target.value)} /></label></div><label>Operating hours<input placeholder="Mon–Sat 8:00–21:00" value={settings.operating_hours} onChange={(event) => field('operating_hours', event.target.value)} /></label><label>Receipt footer<textarea maxLength="240" placeholder="Thank you for shopping with us." value={settings.receipt_footer || ''} onChange={(event) => field('receipt_footer', event.target.value)} /></label><button disabled={busy} type="submit">{busy ? 'Saving...' : 'Save policy'}</button></form></section>
+}
+
+function StoreReports() {
+  const [orders, setOrders] = useState([])
+  const [verifications, setVerifications] = useState([])
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    Promise.all([
+      supabase.from('orders').select('id,order_number,total_amount,payment_status,status,verification_outcome,checkout_duration_seconds,created_at').order('created_at', { ascending: false }),
+      supabase.from('verification_records').select('order_id,outcome,reason_codes,balance_collected,created_at').order('created_at', { ascending: false }),
+    ]).then(([orderResult, verificationResult]) => { setOrders(orderResult.data || []); setVerifications(verificationResult.data || []); setLoading(false) })
+  }, [])
+  const paid = orders.filter((order) => order.payment_status === 'paid')
+  const mismatchCount = verifications.filter((record) => record.outcome === 'mismatch').length
+  const averageSeconds = paid.length ? Math.round(paid.reduce((sum, order) => sum + Number(order.checkout_duration_seconds || 0), 0) / paid.length) : 0
+  const daily = Object.values(paid.reduce((days, order) => { const date = order.created_at.slice(0, 10); days[date] ||= { date, orders: 0, sales: 0 }; days[date].orders += 1; days[date].sales += Number(order.total_amount || 0); return days }, {})).sort((a, b) => b.date.localeCompare(a.date))
+  function exportCsv() {
+    const csv = Papa.unparse(orders.map((order) => ({ order: order.order_number, payment: order.payment_status, verification: order.verification_outcome || 'pending', total: order.total_amount, created_at: order.created_at })))
+    const anchor = document.createElement('a'); anchor.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); anchor.download = `glide-store-report-${new Date().toISOString().slice(0, 10)}.csv`; anchor.click(); URL.revokeObjectURL(anchor.href)
+  }
+  return <section className="dash-section"><PageTitle title="Pilot reports" subtitle="Sales, basket verification and checkout performance in one operational view." /><div className="report-actions"><button type="button" onClick={exportCsv}>Export CSV</button><button className="secondary-action" type="button" onClick={() => window.print()}>Print / save PDF</button></div>{loading ? <LoadingRows /> : <><div className="metrics-grid"><Metric label="Paid sales" value={formatMoney(paid.reduce((sum, order) => sum + Number(order.total_amount || 0), 0))} /><Metric label="Paid baskets" value={paid.length} /><Metric label="Mismatch rate" value={`${verifications.length ? ((mismatchCount / verifications.length) * 100).toFixed(1) : '0.0'}%`} /><Metric label="Avg. checkout" value={averageSeconds ? `${Math.floor(averageSeconds / 60)}m ${averageSeconds % 60}s` : '—'} /></div><div className="table-wrap"><table><thead><tr><th>Day</th><th>Paid baskets</th><th>Sales</th></tr></thead><tbody>{daily.map((row) => <tr key={row.date}><td>{row.date}</td><td>{row.orders}</td><td>{formatMoney(row.sales)}</td></tr>)}</tbody></table></div></>}</section>
+}
+
 function Orders() {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
+  const [query, setQuery] = useState('')
+  const [detail, setDetail] = useState(null)
 
   const loadOrders = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true)
@@ -5817,12 +6448,24 @@ function Orders() {
 
   useRealtimeRefresh('orders-live', ['orders', 'payments'], () => loadOrders(false))
 
+  async function openOrder(order) {
+    const [items, events, verification] = await Promise.all([
+      supabase.from('order_items').select('*').eq('order_id', order.id),
+      supabase.from('order_events').select('*').eq('order_id', order.id).order('created_at', { ascending: true }),
+      supabase.from('verification_records').select('*').eq('order_id', order.id).maybeSingle(),
+    ])
+    setDetail({ ...order, items: items.data || [], events: events.data || [], verification: verification.data || null })
+  }
+
+  const visibleOrders = orders.filter((order) => `${order.order_number} ${order.customer_email || ''} ${order.receipt_token || ''}`.toLowerCase().includes(query.toLowerCase()))
+
   return (
     <section className="dash-section">
       <PageTitle title="Orders" subtitle="All self-checkout orders for this store." />
+      <div className="order-tools"><input placeholder="Search order, receipt or shopper email" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
       {loading ? (
         <LoadingRows />
-      ) : orders.length ? (
+      ) : visibleOrders.length ? (
         <div className="table-wrap">
           <table>
             <thead>
@@ -5837,8 +6480,8 @@ function Orders() {
               </tr>
             </thead>
             <tbody>
-              {orders.map((order) => (
-                <tr key={order.id}>
+              {visibleOrders.map((order) => (
+                <tr key={order.id} onClick={() => openOrder(order)}>
                   <td>{order.order_number}</td>
                   <td>{order.status}</td>
                   <td>{formatMoney(order.total_amount)}</td>
@@ -5858,8 +6501,9 @@ function Orders() {
           </table>
         </div>
       ) : (
-        <EmptyState>No orders yet.</EmptyState>
+        <EmptyState>No orders match this search.</EmptyState>
       )}
+      {detail ? <div className="modal-backdrop" role="presentation" onClick={() => setDetail(null)}><section className="modal-card order-detail" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}><button className="modal-close" type="button" onClick={() => setDetail(null)}>×</button><p className="eyebrow">Transaction detail</p><h2>{detail.order_number}</h2><SimpleList rows={[{ label: 'Total', value: formatMoney(detail.total_amount) }, { label: 'Payment', value: detail.payment_status }, { label: 'Exit outcome', value: detail.verification_outcome || 'Not verified' }, { label: 'Shopper', value: detail.customer_email || 'Guest' }]} /><h3>Items</h3><SimpleList rows={detail.items.map((item) => ({ label: `${item.product_name} × ${item.quantity}`, value: formatMoney(item.line_total) }))} /><h3>Audit timeline</h3><div className="timeline-list">{detail.events.length ? detail.events.map((event) => <div key={event.id}><i /><span><strong>{event.event_label}</strong><small>{formatDateTime(event.created_at)}</small></span></div>) : <EmptyState>No audit events were captured for this older order.</EmptyState>}</div>{detail.verification?.reason_codes?.length ? <Notice tone="warning">Mismatch: {detail.verification.reason_codes.map((reason) => reason.replaceAll('_', ' ')).join(', ')}</Notice> : null}</section></div> : null}
     </section>
   )
 }

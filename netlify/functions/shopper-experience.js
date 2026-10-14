@@ -59,6 +59,7 @@ export async function handler(event) {
         .single()
 
       if (result.error) return bad(result.error.message)
+      await supabase.from('platform_system_logs').insert({ merchant_id: order.merchant_id, event_type: 'shopper_feedback_received', message: `Feedback received for ${order.order_number}.`, details: { rating, order_id: order.id } })
       return json(200, { feedback: result.data })
     }
 
@@ -84,6 +85,7 @@ export async function handler(event) {
         .single()
 
       if (result.error) return bad(result.error.message)
+      await supabase.from('platform_system_logs').insert({ merchant_id: order.merchant_id, event_type: 'shopper_interest_registered', message: `A shopper joined early access after visiting ${order.merchant_profile?.store_name || 'a store'}.`, details: { order_id: order.id, offers: Boolean(body.offers) } })
       return json(200, { signup: result.data })
     }
 
